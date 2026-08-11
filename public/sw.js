@@ -1,4 +1,4 @@
-const STATIC_CACHE = "worldexplorer-static-v6";
+const STATIC_CACHE = "worldexplorer-static-v7";
 const TILE_CACHE = "worldexplorer-osm-v1";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg", "/vendor/leaflet.js"];
 const MAX_TILE_ENTRIES = 500;
@@ -9,12 +9,13 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => ![STATIC_CACHE, TILE_CACHE].includes(key)).map((key) => caches.delete(key))),
-    ),
-  );
-  self.clients.claim();
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((key) => ![STATIC_CACHE, TILE_CACHE].includes(key)).map((key) => caches.delete(key)));
+    await self.clients.claim();
+    const windows = await self.clients.matchAll({ type: "window" });
+    await Promise.all(windows.map((client) => client.navigate(client.url).catch(() => undefined)));
+  })());
 });
 
 async function trimTiles() {

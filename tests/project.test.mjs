@@ -21,7 +21,8 @@ test("keeps exploration offline-first", async () => {
   ]);
   assert.match(storage, /const DB_VERSION = 2/);
   for (const store of ["circles", "trips", "collections", "outbox"]) assert.match(storage, new RegExp(`"${store}"`));
-  assert.match(serviceWorker, /worldexplorer-static-v6/);
+  assert.match(serviceWorker, /worldexplorer-static-v7/);
+  assert.match(serviceWorker, /client\.navigate\(client\.url\)/);
   assert.match(serviceWorker, /worldexplorer-osm-v1/);
   assert.match(serviceWorker, /pathname\.startsWith\("\/api\/"\)/);
   assert.match(serviceWorker, /event\.respondWith\(networkFirst\(event\.request\)\)/);
