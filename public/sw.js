@@ -1,4 +1,4 @@
-const CACHE = "worldexplorer-v2";
+const CACHE = "worldexplorer-v3";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg"];
 
 self.addEventListener("install", (event) => {

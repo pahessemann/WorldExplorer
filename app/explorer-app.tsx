@@ -432,26 +432,26 @@ export function ExplorerApp() {
     const world = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];
     L.polygon([world, ...circles.map(circleRing)], {
       stroke: false,
-      fillColor: "#35494a",
-      fillOpacity: 0.88,
+      fillColor: "#263d4b",
+      fillOpacity: 0.56,
       fillRule: "evenodd",
       interactive: false,
     }).addTo(layers.fog);
     circles.forEach((circle) => {
       L.circle([circle.lat, circle.lng], {
         radius: 50,
-        color: "#a9e9a0",
-        weight: 1,
-        opacity: 0.35,
+        color: "#91dc8b",
+        weight: 2,
+        opacity: 0.62,
         fillColor: "#a9e9a0",
-        fillOpacity: 0.72,
+        fillOpacity: 0.38,
         interactive: false,
       }).addTo(layers.reveals);
     });
     if (route.length > 1) {
       const line = L.polyline(route.map((p) => [p.lat, p.lng]), {
-        color: "#aeb9ce",
-        weight: 6,
+        color: "#dfe8ef",
+        weight: 5,
         opacity: 0.95,
         lineCap: "round",
       });
@@ -627,6 +627,7 @@ export function ExplorerApp() {
         <section className="map-screen" aria-label="Carte d’exploration">
           <div ref={mapNodeRef} className="map-canvas" aria-label="Carte de Paris avec zones explorées" />
           <div className="map-vignette" />
+          <a className="osm-credit" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap</a>
           <header className="map-topbar">
             <button className="map-help" onClick={() => setToast("Marchez pour agrandir la zone verte et dévoiler la carte")}>?</button>
             <div className="map-city-tag"><span className="live-pulse" /><b>Paris</b><small>{gpsState === "live" ? "GPS EN DIRECT" : "MODE EXPLORATION"}</small></div>
