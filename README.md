@@ -2,6 +2,8 @@
 
 WorldExplorer est une PWA mobile d’exploration urbaine. Chaque déplacement révèle un cercle de 50 mètres sur OpenStreetMap, alimente un trajet et peut débloquer des cartes culturelles de ville.
 
+Le produit reprend la boucle d’exploration « fog of world » : marcher, révéler des fragments de carte, trouver des lieux mystérieux et compléter son journal. La progression ne peut pas être achetée : aucune énergie, aucun booster et aucune zone payante.
+
 ## Version exploitable
 
 - GPS réel avec `watchPosition`, vitesse, boussole, distance et durée.

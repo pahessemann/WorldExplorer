@@ -271,6 +271,7 @@ export function ExplorerApp() {
       layersRef.current = {
         fog: L.layerGroup().addTo(map),
         reveals: L.layerGroup().addTo(map),
+        mysteries: L.layerGroup().addTo(map),
         route: L.layerGroup().addTo(map),
         marker: L.layerGroup().addTo(map),
       };
@@ -321,6 +322,18 @@ export function ExplorerApp() {
         interactive: false,
       }).addTo(layers.reveals);
     });
+    cards.forEach((card) => {
+      if (card.latitude == null || card.longitude == null || card.state === "proposal") return;
+      const found = card.state === "collected";
+      L.marker([card.latitude, card.longitude], {
+        icon: L.divIcon({
+          className: "mystery-marker-wrap",
+          html: `<span class="mystery-marker ${found ? "found" : ""}" aria-label="${found ? "Mystère découvert" : "Lieu mystérieux"}"><b>${found ? "★" : "?"}</b></span>`,
+          iconSize: [38, 44],
+          iconAnchor: [19, 42],
+        }),
+      }).addTo(layers.mysteries);
+    });
     if (route.length > 1) {
       const line = L.polyline(route.map((p) => [p.lat, p.lng]), {
         color: "#dfe8ef",
@@ -340,7 +353,7 @@ export function ExplorerApp() {
         }),
       }).addTo(layers.marker);
     }
-  }, [circles, route, position, heading, tab, mapReady]);
+  }, [circles, route, position, heading, tab, mapReady, cards]);
 
   const start = (demo = false) => {
     setDemoMode(demo);
@@ -510,7 +523,8 @@ export function ExplorerApp() {
   const weeklyTotal = weeklyDistances.reduce((sum, day) => sum + day.distance, 0);
   const weeklyMax = Math.max(1, ...weeklyDistances.map((day) => day.distance));
 
-  const tabTitle = useMemo(() => ({ map: "Explorer", trips: "Mes trajets", cities: "Cartes de villes", profile: "Profil" })[tab], [tab]);
+  const tabTitle = useMemo(() => ({ map: "Explorer", trips: "Journal", cities: "Mystères de Paris", profile: "Mon aventure" })[tab], [tab]);
+  const navigationLabels = { map: "Carte", trips: "Journal", cities: "Mystères", profile: "Moi" } as const;
 
   return (
     <main className={`app-shell tab-${tab}`}>
@@ -521,9 +535,9 @@ export function ExplorerApp() {
         </button>
         <nav>
           {(["map", "trips", "cities", "profile"] as Tab[]).map((item) => (
-            <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)} aria-label={({ map: "Carte", trips: "Trajets", cities: "Villes", profile: "Profil" })[item]}>
+            <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)} aria-label={navigationLabels[item]}>
               <NavIcon name={item} />
-              <span>{({ map: "Carte", trips: "Trajets", cities: "Villes", profile: "Profil" })[item]}</span>
+              <span>{navigationLabels[item]}</span>
             </button>
           ))}
         </nav>
@@ -536,7 +550,7 @@ export function ExplorerApp() {
           <a className="osm-credit" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap</a>
           <header className="map-header">
             <button className="map-brand" onClick={() => setTab("map")} aria-label="Recentrer sur la carte"><span>🌍</span><b>WorldExplorer</b></button>
-            <div className="map-live-status"><i className={gpsState === "live" ? "active" : ""} /><span>{gpsState === "live" ? "GPS actif" : "Carte de Paris"}</span><em className={`sync-state ${syncState}`}>{syncState === "synced" ? "Sauvegardé" : syncState === "syncing" ? "Synchronisation" : "Hors ligne"}</em></div>
+            <div className="map-live-status"><i className={gpsState === "live" ? "active" : ""} /><span>{circles.length} fragments · {collected}/{collectionTotal} mystères</span><em className={`sync-state ${syncState}`}>{syncState === "synced" ? "Sauvegardé" : syncState === "syncing" ? "Synchronisation" : "Hors ligne"}</em></div>
           </header>
 
           {mapStatus !== "ready" && <div className={`map-state map-state-${mapStatus}`}>
@@ -554,11 +568,12 @@ export function ExplorerApp() {
           </div>
 
           <div className="map-legend" aria-label="Légende de la carte">
-            <span><i className="legend-revealed" />Zone explorée</span>
-            <span><i className="legend-hidden" />À découvrir</span>
+            <span><i className="legend-revealed" />Dévoilé</span>
+            <span><i className="legend-hidden" />Brouillard</span>
           </div>
 
           <div className="explore-panel">
+            {!circles.length && !tracking && <p className="first-adventure">Chaque pas efface le brouillard. Aucun pass, aucune énergie à acheter.</p>}
             <div className="live-metrics">
               <span><small>Vitesse</small><b>{speedKmh.toFixed(1)} km/h</b></span>
               <span><small>Distance</small><b>{formatDistance(routeMeters)}</b></span>
@@ -577,7 +592,7 @@ export function ExplorerApp() {
 
       {tab === "trips" && (
         <section className="content-screen">
-          <ContentHeader eyebrow="VOTRE JOURNAL" title={tabTitle} action="Exporter" onAction={exportTrips} />
+          <ContentHeader eyebrow="VOS AVENTURES" title={tabTitle} action="Exporter" onAction={exportTrips} />
           <div className="overview-grid">
             <article className="hero-stat lime-panel">
               <span className="stat-symbol">↗</span>
@@ -610,17 +625,17 @@ export function ExplorerApp() {
 
       {tab === "cities" && (
         <section className="content-screen cities-screen">
-          <ContentHeader eyebrow="COLLECTIONNER LE MONDE" title={tabTitle} action="Débloquer par QR" onAction={() => setQrOpen(true)} />
+          <ContentHeader eyebrow="LIEUX CACHÉS" title={tabTitle} action="Code secret" onAction={() => setQrOpen(true)} />
           <div className="city-hero">
             <div className="city-art"><span>PARIS</span><i className="eiffel">A</i><em>48° 51′ N<br />2° 21′ E</em></div>
             <div className="city-progress">
-              <span>VILLE ACTIVE</span><h2>Paris</h2><p>Chaque quartier cache une histoire. Explorez la ville pour compléter votre collection.</p>
+              <span>VILLE EN COURS</span><h2>Paris</h2><p>Effacez le brouillard, trouvez les points d’interrogation et révélez les histoires cachées de la ville.</p>
               <div className="collection-count"><strong>{collected}</strong><span>/ {collectionTotal} cartes</span><b>{collectionProgress}%</b></div>
               <i className="progress-track"><em style={{ width: `${collectionProgress}%` }} /></i>
               <button onClick={() => setTab("map")}>Continuer l’exploration <span>↗</span></button>
             </div>
           </div>
-          <div className="section-heading cards-heading"><div><small>COLLECTION DE PARIS</small><h2>Histoires à découvrir</h2></div><button onClick={() => setProposalOpen(true)}>+ Proposer une carte</button></div>
+          <div className="section-heading cards-heading"><div><small>COLLECTION DE PARIS</small><h2>Mystères à découvrir</h2></div><button onClick={() => setProposalOpen(true)}>+ Proposer un mystère</button></div>
           <div className="city-card-grid">
             {cards.map((card) => (
               <article className={`city-card ${card.tone} state-${card.state}`} key={card.id}>
@@ -639,7 +654,7 @@ export function ExplorerApp() {
           <ContentHeader eyebrow="VOTRE PROGRESSION" title={tabTitle} />
           <div className="profile-hero">
             <div className="profile-avatar"><span>PH</span><i>NIV. {level}</i></div>
-            <div className="profile-copy"><span>EXPLORATEUR URBAIN</span><h2>Paul H.</h2><p>Paris · France</p><div className="level-line"><i><em style={{ width: `${levelProgress}%` }} /></i><span>{xp % 1_000} / 1 000 XP</span></div></div>
+            <div className="profile-copy"><span>AVENTURIER URBAIN</span><h2>Paul H.</h2><p>Paris · France</p><div className="level-line"><i><em style={{ width: `${levelProgress}%` }} /></i><span>{xp % 1_000} / 1 000 XP gagnés en explorant</span></div></div>
             {installPrompt && <button className="outline-button" onClick={() => (installPrompt as Event & { prompt: () => Promise<void> }).prompt()}>Installer l’app</button>}
           </div>
           <div className="profile-stats">
@@ -648,6 +663,7 @@ export function ExplorerApp() {
             <article><span>▦</span><strong>{collected}</strong><small>CARTES</small></article>
             <article><span>⌖</span><strong>{exploredCities}</strong><small>VILLES</small></article>
           </div>
+          <div className="fair-play-note"><span>🌿</span><div><strong>Tout se gagne dehors</strong><p>Aucune énergie, aucun booster et aucune zone payante. La progression dépend uniquement de vos explorations.</p></div></div>
           <div className="profile-columns">
             <div>
               <div className="section-heading"><div><small>COLLECTION</small><h2>Cartes débloquées</h2></div><button onClick={() => setTab("cities")}>Voir la collection</button></div>
@@ -661,7 +677,7 @@ export function ExplorerApp() {
       <nav className="mobile-nav" aria-label="Navigation principale">
         {(["map", "trips", "cities", "profile"] as Tab[]).map((item) => (
           <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>
-            <NavIcon name={item} /><span>{({ map: "Carte", trips: "Trajets", cities: "Villes", profile: "Profil" })[item]}</span>
+            <NavIcon name={item} /><span>{navigationLabels[item]}</span>
           </button>
         ))}
       </nav>
@@ -671,12 +687,12 @@ export function ExplorerApp() {
           <button type="button" className="modal-dismiss" onClick={() => setProposalOpen(false)} aria-label="Fermer la proposition" />
           <form className="proposal-modal" onSubmit={submitProposal}>
             <button type="button" className="modal-close" onClick={() => setProposalOpen(false)} aria-label="Fermer">×</button>
-            <span className="modal-eyebrow">COMMUNAUTÉ</span><h2>Proposer une carte</h2><p>Partagez un lieu, une histoire ou un détail que les explorateurs pourront débloquer sur place.</p>
+            <span className="modal-eyebrow">COMMUNAUTÉ</span><h2>Proposer un mystère</h2><p>Partagez un lieu, une histoire ou un détail que les autres aventuriers pourront révéler sur place.</p>
             <label>Titre<input name="title" required placeholder="Ex. Les enseignes oubliées" /></label>
             <label>Ville<select name="city"><option>Paris</option><option>Lyon</option><option>Bordeaux</option></select></label>
             <label>Description<textarea name="description" required rows={4} placeholder="Pourquoi cette découverte mérite-t-elle une carte ?" /></label>
             <label>Image<input name="image" type="file" accept="image/*" /></label>
-            <button className="submit-proposal" type="submit">Publier pour le vote <span>→</span></button>
+            <button className="submit-proposal" type="submit">Soumettre aux aventuriers <span>→</span></button>
           </form>
         </div>
       )}
@@ -685,7 +701,7 @@ export function ExplorerApp() {
           <button type="button" className="modal-dismiss" onClick={() => setQrOpen(false)} aria-label="Fermer le scanner QR" />
           <form className="proposal-modal qr-modal" onSubmit={unlockQr}>
             <button type="button" className="modal-close" onClick={() => setQrOpen(false)} aria-label="Fermer">×</button>
-            <span className="modal-eyebrow">DÉBLOCAGE SUR PLACE</span><h2>Code QR</h2>
+            <span className="modal-eyebrow">CODE SECRET</span><h2>Révéler un mystère</h2>
             <p>Saisissez le code imprimé sous le QR. Pour tester, utilisez <b>PARIS-2026</b>.</p>
             <label>Code de la carte<input name="code" required placeholder="PARIS-2026" /></label>
             <button className="submit-proposal" type="submit">Débloquer la carte <span>→</span></button>

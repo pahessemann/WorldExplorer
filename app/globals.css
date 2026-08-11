@@ -107,6 +107,7 @@ button { color: inherit; }
 .legend-hidden { background: rgba(38,61,75,.28); border: 2px solid rgba(38,61,75,.5); }
 
 .explore-panel { position: absolute; z-index: 650; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(700px, calc(100% - 150px)); min-height: 86px; padding: 10px; display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; border: 1px solid rgba(33,50,74,.18); border-radius: 20px; background: rgba(255,255,255,.96); box-shadow: 0 16px 45px rgba(25,49,72,.2); backdrop-filter: blur(14px); }
+.first-adventure { grid-column: 1 / -1; margin: 0; padding: 2px 5px; color: #53667a; font-size: 9px; font-weight: 800; text-align: center; }
 .live-metrics { display: grid; grid-template-columns: repeat(4, 1fr); }
 .live-metrics span { min-width: 0; padding: 5px 12px; display: grid; gap: 2px; border-right: 1px solid var(--line); }
 .live-metrics span:last-child { border-right: 0; }
@@ -124,6 +125,14 @@ button { color: inherit; }
 .explorer-marker-wrap { background: transparent; border: 0; }
 .explorer-marker { width: 34px; height: 34px; margin: 7px; display: block; border-radius: 50%; background: #4b8df8; border: 4px solid white; box-shadow: 0 2px 0 #29415d, 0 0 0 12px rgba(75,141,248,.16); }
 .explorer-marker b, .explorer-marker i { display: none; }
+.mystery-marker-wrap { background: transparent; border: 0; }
+.mystery-marker {
+  width: 38px; height: 38px; display: grid; place-items: center; border: 3px solid #253b55;
+  border-radius: 50% 50% 50% 10px; transform: rotate(-45deg); color: #253b55; background: var(--yellow);
+  box-shadow: 0 5px 0 rgba(37,59,85,.35), 0 0 0 8px rgba(255,212,92,.2); font-size: 21px; font-weight: 1000;
+}
+.mystery-marker.found { color: #174c30; background: var(--green); box-shadow: 0 5px 0 rgba(23,76,48,.3), 0 0 0 8px rgba(140,227,156,.18); }
+.mystery-marker b { transform: rotate(45deg); }
 
 .content-screen { min-height: 100svh; max-width: 1350px; margin: 0 auto; padding: 46px clamp(24px, 5vw, 68px) 80px; }
 .content-header { display: flex; justify-content: space-between; align-items: end; gap: 20px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
@@ -227,6 +236,11 @@ button { color: inherit; }
 .profile-stats article > span { color: var(--purple); }
 .profile-stats small { color: var(--muted); font-size: 8px; }
 .profile-columns { margin-top: 30px; }
+.fair-play-note { margin-top: 16px; padding: 17px 20px; display: flex; align-items: center; gap: 13px; border: 1px solid #bfe0c6; border-radius: 16px; background: #edfaef; }
+.fair-play-note > span { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 13px; background: white; font-size: 21px; }
+.fair-play-note div { display: grid; gap: 3px; }
+.fair-play-note strong { font-size: 12px; }
+.fair-play-note p { margin: 0; color: #55705d; font-size: 9px; line-height: 1.45; }
 .mini-collection { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .mini-collection article { min-height: 150px; padding: 16px; display: flex; flex-direction: column; justify-content: end; border-radius: 16px; color: white; background: var(--purple); }
 .mini-collection article.blue { background: #4d91c9; }
@@ -274,7 +288,7 @@ button { color: inherit; }
   .map-live-status { max-width: calc(100% - 54px); }
   .map-live-status > span { display: none; }
   .map-legend { left: 10px; top: calc(66px + env(safe-area-inset-top)); }
-  .map-controls { left: 10px; bottom: 158px; }
+  .map-controls { left: 10px; bottom: 176px; }
   .locate-button { width: 46px; padding: 0; justify-content: center; }
   .locate-button > span { font-size: 23px; }
   .locate-button { font-size: 0; }
@@ -284,8 +298,8 @@ button { color: inherit; }
   .live-metrics b { font-size: 10px; }
   .explore-button { width: 100%; min-width: 0; height: 48px; }
   .demo-link { justify-self: center; }
-  .toast { right: 8px; bottom: 160px; }
-  .osm-credit { bottom: 157px; }
+  .toast { right: 8px; bottom: 178px; }
+  .osm-credit { bottom: 175px; }
   .content-screen { padding: 28px 16px 92px; }
   .content-header h1 { font-size: 36px; }
   .overview-grid { grid-template-columns: 1fr 1fr; }

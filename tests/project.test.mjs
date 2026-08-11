@@ -33,6 +33,8 @@ test("keeps the map visible and removes decorative controls", async () => {
   assert.match(explorer, /https:\/\/tile\.openstreetmap\.org\/\{z\}\/\{x\}\/\{y\}\.png/);
   assert.match(explorer, /fillOpacity: 0\.28/);
   assert.doesNotMatch(explorer, /Radar des découvertes|RÉCLAMER|map-layer-control/);
+  assert.match(explorer, /Aucune énergie, aucun booster et aucune zone payante/);
+  assert.match(explorer, /mystery-marker/);
 });
 
 test("enforces the 50 metre reveal model", async () => {
