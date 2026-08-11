@@ -8,6 +8,9 @@ Le produit reprend la boucle d’exploration « fog of world » : marcher, rév�
 
 - GPS réel avec `watchPosition`, vitesse, boussole, distance et durée.
 - Brouillard de guerre translucide : les villes et les routes OpenStreetMap restent lisibles.
+- Contour réel de la commune française détectée par GPS, avec son code postal.
+- Pourcentage du territoire exploré calculé à partir des zones dévoilées sans recompter leurs chevauchements.
+- Trouvailles géolocalisées réparties dans chaque commune et sauvegardées hors ligne puis dans D1.
 - Trajets enregistrés, consultables sur la carte et exportables en JSON.
 - Fonctionnement offline-first avec IndexedDB et file de synchronisation.
 - Synchronisation anonyme par appareil dans Cloudflare D1.

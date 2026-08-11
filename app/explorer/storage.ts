@@ -1,14 +1,14 @@
 import type { SyncOperation } from "./types";
 
 const DB_NAME = "worldexplorer";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      for (const store of ["circles", "trips", "proposals", "collections", "outbox", "meta"]) {
+      for (const store of ["circles", "trips", "proposals", "collections", "discoveries", "outbox", "meta"]) {
         if (!db.objectStoreNames.contains(store)) db.createObjectStore(store, { keyPath: "id" });
       }
     };

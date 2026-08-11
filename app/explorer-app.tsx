@@ -4,9 +4,10 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { baseCards, demoPath, GPS_INTERVAL, PARIS, REVEAL_DISTANCE } from "./explorer/demo-data";
 import { circleRing, distanceBetween, formatDistance, formatTime, routeDistance } from "./explorer/geo";
 import { loadLeaflet } from "./explorer/leaflet";
+import { exploredRegionPercent, fetchRegionAt, generateRegionCollectibles, geometryBounds, pointInGeometry } from "./explorer/regions";
 import { deleteRecord, mergeById, putRecord, readAll } from "./explorer/storage";
-import type { CityCard, Collection, Point, Reveal, Tab, Trip } from "./explorer/types";
-import { flushOutbox, pullCloudState, pullCommunityCards, redeemQrCode, syncCircle, syncCollection, syncProposal, syncTrip, syncVote } from "./sync";
+import type { CityCard, Collection, CollectibleDiscovery, Point, RegionBoundary, RegionalCollectible, Reveal, Tab, Trip } from "./explorer/types";
+import { flushOutbox, pullCloudState, pullCommunityCards, redeemQrCode, syncCircle, syncCollection, syncDiscovery, syncProposal, syncTrip, syncVote } from "./sync";
 
 function NavIcon({ name }: { name: Tab }) {
   return <span className={`nav-glyph nav-glyph-${name}`} aria-hidden="true" />;
@@ -26,6 +27,10 @@ export function ExplorerApp() {
   const [gpsState, setGpsState] = useState<"ready" | "asking" | "live" | "blocked">("ready");
   const [toast, setToast] = useState("Vos explorations sont enregistrées sur cet appareil");
   const [cards, setCards] = useState<CityCard[]>(baseCards);
+  const [region, setRegion] = useState<RegionBoundary | null>(null);
+  const [regionStatus, setRegionStatus] = useState<"loading" | "ready" | "unavailable">("loading");
+  const [discoveries, setDiscoveries] = useState<CollectibleDiscovery[]>([]);
+  const [storageReady, setStorageReady] = useState(false);
   const [voted, setVoted] = useState<string[]>([]);
   const [proposalOpen, setProposalOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
@@ -40,8 +45,13 @@ export function ExplorerApp() {
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const lastGpsRef = useRef(0);
   const demoIndexRef = useRef(0);
+  const lastRegionLookupRef = useRef<Pick<Point, "lat" | "lng"> | null>(null);
   const cardsRef = useRef<CityCard[]>(baseCards);
+  const collectiblesRef = useRef<RegionalCollectible[]>([]);
+  const discoveredRef = useRef(new Set<string>());
   const unlockedRef = useRef(new Set(baseCards.filter((card) => card.state === "collected").map((card) => card.id)));
+  const regionCollectibles = useMemo(() => region ? generateRegionCollectibles(region) : [], [region]);
+  const discoveredIds = useMemo(() => new Set(discoveries.map((discovery) => discovery.id)), [discoveries]);
 
   const unlockCard = useCallback((cardId: string, method: Collection["method"], message: string) => {
     if (unlockedRef.current.has(cardId)) return false;
@@ -65,9 +75,44 @@ export function ExplorerApp() {
     return true;
   }, []);
 
+  const unlockCollectible = useCallback((collectible: RegionalCollectible) => {
+    if (discoveredRef.current.has(collectible.id)) return false;
+    discoveredRef.current.add(collectible.id);
+    const discovery: CollectibleDiscovery = {
+      id: collectible.id,
+      regionCode: collectible.regionCode,
+      collectedAt: Date.now(),
+    };
+    setDiscoveries((current) => [...current, discovery]);
+    void putRecord("discoveries", discovery);
+    void syncDiscovery(discovery);
+    setToast(`${collectible.title} trouvé · ajouté à votre collection !`);
+    return true;
+  }, []);
+
+  const refreshRegion = useCallback(async (point: Pick<Point, "lat" | "lng">) => {
+    lastRegionLookupRef.current = point;
+    setRegionStatus("loading");
+    try {
+      const nextRegion = await fetchRegionAt(point);
+      setRegion(nextRegion);
+      void putRecord("meta", nextRegion);
+      setRegionStatus("ready");
+    } catch {
+      setRegionStatus("unavailable");
+    }
+  }, []);
+
   useEffect(() => {
-    Promise.all([readAll<Reveal>("circles"), readAll<Trip>("trips"), readAll<CityCard>("proposals"), readAll<Collection>("collections")])
-      .then(([savedCircles, savedTrips, proposals, collections]) => {
+    Promise.all([
+      readAll<Reveal>("circles"),
+      readAll<Trip>("trips"),
+      readAll<CityCard>("proposals"),
+      readAll<Collection>("collections"),
+      readAll<CollectibleDiscovery>("discoveries"),
+      readAll<RegionBoundary>("meta"),
+    ])
+      .then(([savedCircles, savedTrips, proposals, collections, savedDiscoveries, metadata]) => {
         const realCircles = savedCircles.filter((circle) => !circle.id.startsWith("reveal-demo-"));
         const realTrips = savedTrips.filter((trip) => !trip.id.startsWith("trip-demo-"));
         savedCircles.filter((circle) => circle.id.startsWith("reveal-demo-")).forEach((circle) => void deleteRecord("circles", circle.id));
@@ -81,8 +126,18 @@ export function ExplorerApp() {
             ? { ...card, state: "collected", requirement: "Dans votre collection" }
             : card));
         }
+        if (savedDiscoveries.length) {
+          savedDiscoveries.forEach((discovery) => discoveredRef.current.add(discovery.id));
+          setDiscoveries(savedDiscoveries);
+        }
+        const cachedRegion = metadata.find((item) => item.id === "active-region");
+        if (cachedRegion?.geometry) {
+          setRegion(cachedRegion);
+          setRegionStatus("ready");
+        }
       })
-      .catch(() => setToast("Stockage local indisponible sur ce navigateur"));
+      .catch(() => setToast("Stockage local indisponible sur ce navigateur"))
+      .finally(() => setStorageReady(true));
 
     const votes = window.localStorage.getItem("worldexplorer-votes");
     if (votes) {
@@ -129,6 +184,14 @@ export function ExplorerApp() {
           cardsRef.current = next;
           return next;
         });
+        setDiscoveries((current) => {
+          const merged = mergeById(current, cloud.discoveries);
+          cloud.discoveries.forEach((discovery) => {
+            discoveredRef.current.add(discovery.id);
+            void putRecord("discoveries", discovery);
+          });
+          return merged;
+        });
         setSyncState("synced");
       } catch {
         setSyncState("offline");
@@ -155,6 +218,22 @@ export function ExplorerApp() {
     cardsRef.current = cards;
   }, [cards]);
 
+  useEffect(() => {
+    collectiblesRef.current = regionCollectibles;
+  }, [regionCollectibles]);
+
+  useEffect(() => {
+    discoveries.forEach((discovery) => discoveredRef.current.add(discovery.id));
+  }, [discoveries]);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    const target = position ?? (!region ? PARIS : null);
+    if (!target || (region && pointInGeometry(target, region.geometry))) return;
+    if (lastRegionLookupRef.current && distanceBetween(lastRegionLookupRef.current, target) < 1_000) return;
+    void refreshRegion(target);
+  }, [position, region, refreshRegion, storageReady]);
+
   const revealPoint = useCallback((point: Point) => {
     setPosition(point);
     if (point.heading >= 0) setHeading(point.heading);
@@ -179,11 +258,15 @@ export function ExplorerApp() {
         unlockCard(card.id, "gps", `Carte « ${card.title} » découverte !`);
       }
     });
+    collectiblesRef.current.forEach((collectible) => {
+      if (discoveredRef.current.has(collectible.id)) return;
+      if (distanceBetween(point, collectible) <= collectible.unlockRadius) unlockCollectible(collectible);
+    });
     if (tracking && point.ts - lastGpsRef.current >= GPS_INTERVAL) {
       lastGpsRef.current = point.ts;
       setRoute((current) => [...current, point]);
     }
-  }, [tracking, unlockCard]);
+  }, [tracking, unlockCard, unlockCollectible]);
 
   useEffect(() => {
     if (!tracking || demoMode || !navigator.geolocation) return;
@@ -272,7 +355,9 @@ export function ExplorerApp() {
       layersRef.current = {
         fog: L.layerGroup().addTo(map),
         reveals: L.layerGroup().addTo(map),
+        territory: L.layerGroup().addTo(map),
         mysteries: L.layerGroup().addTo(map),
+        collectibles: L.layerGroup().addTo(map),
         route: L.layerGroup().addTo(map),
         marker: L.layerGroup().addTo(map),
       };
@@ -300,6 +385,7 @@ export function ExplorerApp() {
       polyline: (points: number[][], options: object) => { addTo: (layer: unknown) => unknown; getBounds: () => unknown };
       marker: (point: number[], options: object) => { addTo: (layer: unknown) => unknown };
       divIcon: (options: object) => unknown;
+      geoJSON: (data: object, options: object) => { addTo: (layer: unknown) => unknown };
     };
     const layers = layersRef.current as Record<string, { clearLayers: () => void }>;
     Object.values(layers).forEach((layer) => layer.clearLayers());
@@ -323,6 +409,17 @@ export function ExplorerApp() {
         interactive: false,
       }).addTo(layers.reveals);
     });
+    if (region) {
+      const feature = { type: "Feature", properties: {}, geometry: region.geometry };
+      L.geoJSON(feature, {
+        interactive: false,
+        style: { color: "#24384f", weight: 8, opacity: 0.9, dashArray: "15 8", fillOpacity: 0 },
+      }).addTo(layers.territory);
+      L.geoJSON(feature, {
+        interactive: false,
+        style: { color: "#fff8d7", weight: 4, opacity: 1, dashArray: "11 12", fillOpacity: 0 },
+      }).addTo(layers.territory);
+    }
     cards.forEach((card) => {
       if (card.latitude == null || card.longitude == null || card.state === "proposal") return;
       const found = card.state === "collected";
@@ -334,6 +431,17 @@ export function ExplorerApp() {
           iconAnchor: [19, 42],
         }),
       }).addTo(layers.mysteries);
+    });
+    regionCollectibles.forEach((collectible) => {
+      const found = discoveredIds.has(collectible.id);
+      L.marker([collectible.lat, collectible.lng], {
+        icon: L.divIcon({
+          className: "collectible-marker-wrap",
+          html: `<span class="collectible-marker ${found ? "found" : ""}" aria-label="${found ? "Trouvaille collectée" : collectible.title}"><b>${found ? "✓" : collectible.icon}</b></span>`,
+          iconSize: [40, 40],
+          iconAnchor: [20, 20],
+        }),
+      }).addTo(layers.collectibles);
     });
     if (route.length > 1) {
       L.polyline(route.map((p) => [p.lat, p.lng]), {
@@ -360,7 +468,7 @@ export function ExplorerApp() {
         }),
       }).addTo(layers.marker);
     }
-  }, [circles, route, position, heading, tab, mapReady, cards]);
+  }, [circles, route, position, heading, tab, mapReady, cards, region, regionCollectibles, discoveredIds]);
 
   const start = (demo = false) => {
     setDemoMode(demo);
@@ -377,7 +485,7 @@ export function ExplorerApp() {
       const trip: Trip = {
         id: `trip-${Date.now()}`,
         name: demoMode ? "Exploration démo" : "Nouvelle exploration",
-        city: "Paris",
+        city: region?.name ?? "Paris",
         startedAt,
         duration: Math.max(elapsed, 1),
         distance: routeDistance(route),
@@ -425,6 +533,13 @@ export function ExplorerApp() {
     const map = mapRef.current as { zoomIn?: () => void; zoomOut?: () => void } | null;
     if (direction > 0) map?.zoomIn?.();
     else map?.zoomOut?.();
+  };
+
+  const showRegion = () => {
+    if (!region) return;
+    const bounds = geometryBounds(region.geometry);
+    const map = mapRef.current as { fitBounds?: (bounds: number[][], options?: object) => void } | null;
+    map?.fitBounds?.([[bounds.minLat, bounds.minLng], [bounds.maxLat, bounds.maxLng]], { padding: [28, 28] });
   };
 
   const vote = (id: string) => {
@@ -509,10 +624,13 @@ export function ExplorerApp() {
   const totalDuration = trips.reduce((sum, trip) => sum + trip.duration, 0);
   const totalCircles = circles.length + trips.reduce((sum, trip) => sum + trip.circles, 0);
   const collected = cards.filter((card) => card.state === "collected").length;
-  const collectionTotal = cards.filter((card) => card.state !== "proposal").length;
-  const collectionProgress = collectionTotal ? Math.round((collected / collectionTotal) * 100) : 0;
-  const exploredCities = new Set(cards.filter((card) => card.state === "collected").map((card) => card.city)).size;
-  const xp = circles.length * 10 + trips.length * 100 + collected * 250;
+  const regionPercent = useMemo(() => region ? exploredRegionPercent(region, circles) : 0, [region, circles]);
+  const regionalFound = regionCollectibles.filter((collectible) => discoveredIds.has(collectible.id)).length;
+  const exploredCities = new Set([
+    ...cards.filter((card) => card.state === "collected").map((card) => card.city),
+    ...discoveries.map((discovery) => discovery.regionCode),
+  ]).size;
+  const xp = circles.length * 10 + trips.length * 100 + collected * 250 + discoveries.length * 100;
   const level = Math.floor(xp / 1_000) + 1;
   const levelProgress = Math.round((xp % 1_000) / 10);
   const weeklyDistances = useMemo(() => {
@@ -530,7 +648,7 @@ export function ExplorerApp() {
   const weeklyTotal = weeklyDistances.reduce((sum, day) => sum + day.distance, 0);
   const weeklyMax = Math.max(1, ...weeklyDistances.map((day) => day.distance));
 
-  const tabTitle = useMemo(() => ({ map: "Explorer", trips: "Journal", cities: "Mystères de Paris", profile: "Mon aventure" })[tab], [tab]);
+  const tabTitle = useMemo(() => ({ map: "Explorer", trips: "Journal", cities: `Mystères de ${region?.name ?? "Paris"}`, profile: "Mon aventure" })[tab], [tab, region]);
   const navigationLabels = { map: "Carte", trips: "Journal", cities: "Mystères", profile: "Moi" } as const;
 
   return (
@@ -552,12 +670,12 @@ export function ExplorerApp() {
 
       {tab === "map" && (
         <section className="map-screen" aria-label="Carte d’exploration">
-          <div ref={mapNodeRef} className="map-canvas" aria-label="Carte de Paris avec zones explorées" />
+          <div ref={mapNodeRef} className="map-canvas" aria-label={`Carte de ${region?.name ?? "Paris"} avec zones explorées`} />
           <div className="map-vignette" />
           <a className="osm-credit" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap</a>
           <header className="map-header">
             <button className="map-brand" onClick={() => setTab("map")} aria-label="Recentrer sur la carte"><span>🌍</span><b>WorldExplorer</b></button>
-            <div className="map-live-status"><i className={gpsState === "live" ? "active" : ""} /><span>{circles.length} fragments · {collected}/{collectionTotal} mystères</span><em className={`sync-state ${syncState}`}>{syncState === "synced" ? "Sauvegardé" : syncState === "syncing" ? "Synchronisation" : "Hors ligne"}</em></div>
+            <div className="map-live-status"><i className={gpsState === "live" ? "active" : ""} /><span>{region ? `${region.name} · ${regionPercent.toFixed(2)}%` : `${circles.length} fragments`} · {regionalFound}/{regionCollectibles.length} trouvailles</span><em className={`sync-state ${syncState}`}>{syncState === "synced" ? "Sauvegardé" : syncState === "syncing" ? "Synchronisation" : "Hors ligne"}</em></div>
           </header>
 
           {mapStatus !== "ready" && <div className={`map-state map-state-${mapStatus}`}>
@@ -577,9 +695,15 @@ export function ExplorerApp() {
           <div className="map-legend" aria-label="Légende de la carte">
             <span><i className="legend-revealed" />Dévoilé</span>
             <span><i className="legend-hidden" />Brouillard</span>
+            <span><i className="legend-territory" />Commune</span>
           </div>
 
           <div className="explore-panel">
+            {region ? <div className="territory-progress">
+              <div className="territory-heading"><span className="territory-icon">?</span><div><small>COMMUNE · {region.postcodes[0] ?? region.code}</small><strong>{region.name}</strong></div><b>{regionPercent.toFixed(2)}%</b><button onClick={showRegion}>Voir tout</button></div>
+              <div className="territory-track"><i style={{ width: `${Math.max(regionPercent, 0.6)}%` }} /></div>
+              <small>{regionalFound}/{regionCollectibles.length} trouvailles collectées dans ce territoire</small>
+            </div> : <div className="territory-progress territory-loading"><b>{regionStatus === "unavailable" ? "Contour communal disponible en France" : "Recherche du territoire…"}</b></div>}
             {!circles.length && !tracking && <p className="first-adventure">Chaque pas efface le brouillard. Aucun pass, aucune énergie à acheter.</p>}
             <div className="live-metrics">
               <span><small>Vitesse</small><b>{speedKmh.toFixed(1)} km/h</b></span>
@@ -634,15 +758,15 @@ export function ExplorerApp() {
         <section className="content-screen cities-screen">
           <ContentHeader eyebrow="LIEUX CACHÉS" title={tabTitle} action="Code secret" onAction={() => setQrOpen(true)} />
           <div className="city-hero">
-            <div className="city-art"><span>PARIS</span><i className="eiffel">A</i><em>48° 51′ N<br />2° 21′ E</em></div>
+            <div className="city-art"><span>{region ? `COMMUNE · ${region.postcodes[0] ?? region.code}` : "TERRITOIRE EN COURS"}</span><i className="territory-emblem">?</i><em>{regionCollectibles.length} TROUVAILLES<br />À COLLECTIONNER</em></div>
             <div className="city-progress">
-              <span>VILLE EN COURS</span><h2>Paris</h2><p>Effacez le brouillard, trouvez les points d’interrogation et révélez les histoires cachées de la ville.</p>
-              <div className="collection-count"><strong>{collected}</strong><span>/ {collectionTotal} cartes</span><b>{collectionProgress}%</b></div>
-              <i className="progress-track"><em style={{ width: `${collectionProgress}%` }} /></i>
+              <span>TERRITOIRE EN COURS</span><h2>{region?.name ?? "Paris"}</h2><p>Suivez le contour communal, effacez le brouillard et trouvez les objets cachés partout dans le territoire.</p>
+              <div className="collection-count"><strong>{regionalFound}</strong><span>/ {regionCollectibles.length} trouvailles</span><b>{regionPercent.toFixed(2)}%</b></div>
+              <i className="progress-track"><em style={{ width: `${Math.max(regionPercent, 0.6)}%` }} /></i>
               <button onClick={() => setTab("map")}>Continuer l’exploration <span>↗</span></button>
             </div>
           </div>
-          <div className="section-heading cards-heading"><div><small>COLLECTION DE PARIS</small><h2>Mystères à découvrir</h2></div><button onClick={() => setProposalOpen(true)}>+ Proposer un mystère</button></div>
+          <div className="section-heading cards-heading"><div><small>MYSTÈRES DE LA COMMUNAUTÉ</small><h2>Histoires à découvrir</h2></div><button onClick={() => setProposalOpen(true)}>+ Proposer un mystère</button></div>
           <div className="city-card-grid">
             {cards.map((card) => (
               <article className={`city-card ${card.tone} state-${card.state}`} key={card.id}>
@@ -667,7 +791,7 @@ export function ExplorerApp() {
           <div className="profile-stats">
             <article><span>↗</span><strong>{(totalDistance / 1000).toFixed(1)} km</strong><small>PARCOURUS</small></article>
             <article><span>◎</span><strong>{totalCircles}</strong><small>ZONES</small></article>
-            <article><span>▦</span><strong>{collected}</strong><small>CARTES</small></article>
+            <article><span>▦</span><strong>{collected + discoveries.length}</strong><small>TROUVAILLES</small></article>
             <article><span>⌖</span><strong>{exploredCities}</strong><small>VILLES</small></article>
           </div>
           <div className="fair-play-note"><span>🌿</span><div><strong>Tout se gagne dehors</strong><p>Aucune énergie, aucun booster et aucune zone payante. La progression dépend uniquement de vos explorations.</p></div></div>

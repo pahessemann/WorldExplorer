@@ -1,5 +1,5 @@
 import { deleteRecord, getDeviceId, queueOperation, readAll } from "./explorer/storage";
-import type { CityCard, CloudState, Collection, Reveal, SyncOperation, Trip } from "./explorer/types";
+import type { CityCard, CloudState, Collection, CollectibleDiscovery, Reveal, SyncOperation, Trip } from "./explorer/types";
 
 type RemoteCard = {
   id: string;
@@ -26,8 +26,8 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function sendProgress(kind: "circle" | "trip" | "collection", payload: unknown) {
-  const key = kind === "circle" ? "circles" : kind === "trip" ? "trips" : "collections";
+async function sendProgress(kind: "circle" | "trip" | "collection" | "discovery", payload: unknown) {
+  const key = kind === "circle" ? "circles" : kind === "trip" ? "trips" : kind === "collection" ? "collections" : "discoveries";
   await requestJson("/api/sync", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -36,7 +36,7 @@ async function sendProgress(kind: "circle" | "trip" | "collection", payload: unk
 }
 
 async function performOperation(kind: SyncOperation["kind"], payload: unknown) {
-  if (kind === "circle" || kind === "trip" || kind === "collection") return sendProgress(kind, payload);
+  if (kind === "circle" || kind === "trip" || kind === "collection" || kind === "discovery") return sendProgress(kind, payload);
   if (kind === "vote") {
     return requestJson("/api/community/vote", {
       method: "POST",
@@ -75,6 +75,7 @@ export function syncCircle(circle: Reveal) { return sendOrQueue("circle", circle
 export function syncTrip(trip: Trip) { return sendOrQueue("trip", trip); }
 export function syncVote(cardId: string) { return sendOrQueue("vote", cardId); }
 export function syncCollection(collection: Collection) { return sendOrQueue("collection", collection); }
+export function syncDiscovery(discovery: CollectibleDiscovery) { return sendOrQueue("discovery", discovery); }
 export function syncProposal(card: CityCard, file?: File) { return sendOrQueue("proposal", { card, file }); }
 
 export async function redeemQrCode(code: string) {
@@ -128,10 +129,12 @@ export async function pullCloudState(): Promise<CloudState> {
     circles: Array<{ id: string; latitude: number; longitude: number; radius_m: 50; explored_at: number }>;
     trips: Array<{ id: string; name: string; city: string; started_at: number; duration_seconds: number; distance_m: number; circles_count: number; points_json: string }>;
     collections: Array<{ card_id: string; method: Collection["method"]; collected_at: number }>;
+    discoveries: Array<{ collectible_id: string; region_code: string; collected_at: number }>;
   }>(`/api/sync?deviceId=${encodeURIComponent(deviceId)}`);
   return {
     circles: remote.circles.map((item) => ({ id: item.id, lat: item.latitude, lng: item.longitude, radius: 50, createdAt: item.explored_at })),
     trips: remote.trips.map((item) => ({ id: item.id, name: item.name, city: item.city, startedAt: item.started_at, duration: item.duration_seconds, distance: item.distance_m, circles: item.circles_count, points: JSON.parse(item.points_json) })),
     collections: remote.collections.map((item) => ({ id: `${item.card_id}-${item.collected_at}`, cardId: item.card_id, method: item.method, collectedAt: item.collected_at })),
+    discoveries: remote.discoveries.map((item) => ({ id: item.collectible_id, regionCode: item.region_code, collectedAt: item.collected_at })),
   };
 }

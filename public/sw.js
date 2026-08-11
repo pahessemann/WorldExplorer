@@ -1,4 +1,4 @@
-const STATIC_CACHE = "worldexplorer-static-v8";
+const STATIC_CACHE = "worldexplorer-static-v9";
 const TILE_CACHE = "worldexplorer-osm-v1";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg", "/vendor/leaflet.js"];
 const MAX_TILE_ENTRIES = 500;

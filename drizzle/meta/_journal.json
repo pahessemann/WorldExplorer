@@ -8,6 +8,13 @@
       "when": 1786473288756,
       "tag": "0000_famous_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786484471423,
+      "tag": "0001_silky_the_captain",
+      "breakpoints": true
     }
   ]
 }

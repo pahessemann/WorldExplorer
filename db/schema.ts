@@ -62,3 +62,13 @@ export const collectedCards = sqliteTable("collected_cards", {
   method: text("method", { enum: ["gps", "qr", "challenge"] }).notNull(),
   collectedAt: integer("collected_at").notNull(),
 }, (table) => [primaryKey({ columns: [table.cardId, table.deviceId] }), index("idx_collected_cards_device").on(table.deviceId)]);
+
+export const regionalDiscoveries = sqliteTable("regional_discoveries", {
+  collectibleId: text("collectible_id").notNull(),
+  deviceId: text("device_id").notNull().references(() => devices.id, { onDelete: "cascade" }),
+  regionCode: text("region_code").notNull(),
+  collectedAt: integer("collected_at").notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.collectibleId, table.deviceId] }),
+  index("idx_regional_discoveries_device_region").on(table.deviceId, table.regionCode),
+]);

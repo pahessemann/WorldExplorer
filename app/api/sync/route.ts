@@ -9,12 +9,13 @@ export async function GET(request: Request) {
     if (!validDeviceId(deviceId)) return apiError("Appareil invalide.");
     await ensureDevice(deviceId);
     const db = getD1();
-    const [circles, trips, collections] = await Promise.all([
+    const [circles, trips, collections, discoveries] = await Promise.all([
       db.prepare(`SELECT id, latitude, longitude, radius_m, explored_at FROM explored_circles WHERE device_id = ? ORDER BY explored_at ASC LIMIT 10000`).bind(deviceId).all(),
       db.prepare(`SELECT id, name, city, started_at, duration_seconds, distance_m, circles_count, points_json FROM trips WHERE device_id = ? ORDER BY started_at DESC LIMIT 500`).bind(deviceId).all(),
       db.prepare(`SELECT card_id, method, collected_at FROM collected_cards WHERE device_id = ? ORDER BY collected_at DESC LIMIT 500`).bind(deviceId).all(),
+      db.prepare(`SELECT collectible_id, region_code, collected_at FROM regional_discoveries WHERE device_id = ? ORDER BY collected_at DESC LIMIT 2000`).bind(deviceId).all(),
     ]);
-    return Response.json({ circles: circles.results, trips: trips.results, collections: collections.results });
+    return Response.json({ circles: circles.results, trips: trips.results, collections: collections.results, discoveries: discoveries.results });
   } catch (error) {
     console.error("sync.get", error);
     return apiError("Impossible de récupérer la progression.", 500);
@@ -28,7 +29,8 @@ export async function POST(request: Request) {
     const circles = Array.isArray(body.circles) ? body.circles.slice(0, 500) as Payload[] : [];
     const trips = Array.isArray(body.trips) ? body.trips.slice(0, 50) as Payload[] : [];
     const collections = Array.isArray(body.collections) ? body.collections.slice(0, 100) as Payload[] : [];
-    if (!circles.length && !trips.length && !collections.length) return apiError("Aucune donnée à synchroniser.");
+    const discoveries = Array.isArray(body.discoveries) ? body.discoveries.slice(0, 200) as Payload[] : [];
+    if (!circles.length && !trips.length && !collections.length && !discoveries.length) return apiError("Aucune donnée à synchroniser.");
     await ensureDevice(body.deviceId);
     const db = getD1();
     const statements: D1PreparedStatement[] = [];
@@ -74,6 +76,16 @@ export async function POST(request: Request) {
         INSERT OR IGNORE INTO collected_cards (card_id, device_id, method, collected_at)
         VALUES (?, ?, ?, ?)
       `).bind(cardId, body.deviceId, method, finiteNumber(collection.collectedAt, 1, Date.now() + 86_400_000) ?? Date.now()));
+    }
+
+    for (const discovery of discoveries) {
+      const collectibleId = cleanText(discovery.id, 120);
+      const regionCode = cleanText(discovery.regionCode, 20);
+      if (!collectibleId || !regionCode) continue;
+      statements.push(db.prepare(`
+        INSERT OR IGNORE INTO regional_discoveries (collectible_id, device_id, region_code, collected_at)
+        VALUES (?, ?, ?, ?)
+      `).bind(collectibleId, body.deviceId, regionCode, finiteNumber(discovery.collectedAt, 1, Date.now() + 86_400_000) ?? Date.now()));
     }
 
     if (statements.length) await db.batch(statements);

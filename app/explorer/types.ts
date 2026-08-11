@@ -53,9 +53,41 @@ export type Collection = {
   method: "gps" | "qr" | "challenge";
 };
 
+export type LngLat = [number, number];
+
+export type RegionGeometry =
+  | { type: "Polygon"; coordinates: LngLat[][] }
+  | { type: "MultiPolygon"; coordinates: LngLat[][][] };
+
+export type RegionBoundary = {
+  id: "active-region";
+  code: string;
+  name: string;
+  postcodes: string[];
+  geometry: RegionGeometry;
+  areaM2: number;
+  fetchedAt: number;
+};
+
+export type RegionalCollectible = {
+  id: string;
+  regionCode: string;
+  title: string;
+  icon: string;
+  lat: number;
+  lng: number;
+  unlockRadius: number;
+};
+
+export type CollectibleDiscovery = {
+  id: string;
+  regionCode: string;
+  collectedAt: number;
+};
+
 export type SyncOperation = {
   id: string;
-  kind: "circle" | "trip" | "proposal" | "vote" | "collection";
+  kind: "circle" | "trip" | "proposal" | "vote" | "collection" | "discovery";
   payload: unknown;
   createdAt: number;
   attempts: number;
@@ -65,4 +97,5 @@ export type CloudState = {
   circles: Reveal[];
   trips: Trip[];
   collections: Collection[];
+  discoveries: CollectibleDiscovery[];
 };

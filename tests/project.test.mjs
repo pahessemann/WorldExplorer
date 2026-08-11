@@ -19,9 +19,9 @@ test("keeps exploration offline-first", async () => {
     source("app/explorer/storage.ts"),
     source("public/sw.js"),
   ]);
-  assert.match(storage, /const DB_VERSION = 2/);
-  for (const store of ["circles", "trips", "collections", "outbox"]) assert.match(storage, new RegExp(`"${store}"`));
-  assert.match(serviceWorker, /worldexplorer-static-v8/);
+  assert.match(storage, /const DB_VERSION = 3/);
+  for (const store of ["circles", "trips", "collections", "discoveries", "outbox"]) assert.match(storage, new RegExp(`"${store}"`));
+  assert.match(serviceWorker, /worldexplorer-static-v9/);
   assert.match(serviceWorker, /client\.navigate\(client\.url\)/);
   assert.match(serviceWorker, /worldexplorer-osm-v1/);
   assert.match(serviceWorker, /pathname\.startsWith\("\/api\/"\)/);
@@ -37,6 +37,16 @@ test("keeps the map visible and removes decorative controls", async () => {
   assert.doesNotMatch(explorer, /Radar des découvertes|RÉCLAMER|map-layer-control/);
   assert.match(explorer, /Aucune énergie, aucun booster et aucune zone payante/);
   assert.match(explorer, /mystery-marker/);
+  assert.match(explorer, /collectible-marker/);
+  assert.match(explorer, /L\.geoJSON/);
+});
+
+test("loads real French commune boundaries and computes territory progress", async () => {
+  const regions = await source("app/explorer/regions.ts");
+  assert.match(regions, /https:\/\/geo\.api\.gouv\.fr\/communes/);
+  assert.match(regions, /geometry: "contour"/);
+  assert.match(regions, /exploredRegionPercent/);
+  assert.match(regions, /generateRegionCollectibles/);
 });
 
 test("enforces the 50 metre reveal model", async () => {
@@ -57,4 +67,11 @@ test("ships community, vote, QR and image APIs", async () => {
     "app/api/community/unlock/route.ts",
     "app/api/uploads/route.ts",
   ].map((path) => source(path)));
+});
+
+test("persists regional discoveries in D1", async () => {
+  const [schema, sync] = await Promise.all([source("db/schema.ts"), source("app/api/sync/route.ts")]);
+  assert.match(schema, /regional_discoveries/);
+  assert.match(sync, /INSERT OR IGNORE INTO regional_discoveries/);
+  assert.match(sync, /collectible_id, region_code, collected_at/);
 });
