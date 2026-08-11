@@ -6,7 +6,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const incoming = await headers();
   const host = incoming.get("host") ?? "localhost:3000";
   const protocol = incoming.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  const ogImage = `${protocol}://${host}/og.png`;
+  const ogImage = `${protocol}://${host}/og-cartoon.png`;
   const description = "La carte d’exploration urbaine qui révèle le monde à chacun de vos pas.";
   return {
     title: { default: "WorldExplorer", template: "%s · WorldExplorer" },
@@ -31,7 +31,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: "cover",
-  themeColor: "#111412",
+  themeColor: "#8bd7ff",
 };
 
 export default function RootLayout({

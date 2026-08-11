@@ -392,9 +392,9 @@ export function ExplorerApp() {
       };
       const map = L.map(mapNodeRef.current, { zoomControl: false, attributionControl: false });
       map.setView([PARIS.lat, PARIS.lng], 16);
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-        maxZoom: 20,
-        subdomains: "abcd",
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        subdomains: "abc",
       }).addTo(map);
       mapRef.current = map;
       layersRef.current = {
@@ -431,26 +431,26 @@ export function ExplorerApp() {
     const world = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];
     L.polygon([world, ...circles.map(circleRing)], {
       stroke: false,
-      fillColor: "#060806",
-      fillOpacity: 0.78,
+      fillColor: "#7883bd",
+      fillOpacity: 0.58,
       fillRule: "evenodd",
       interactive: false,
     }).addTo(layers.fog);
     circles.forEach((circle) => {
       L.circle([circle.lat, circle.lng], {
         radius: 50,
-        color: "#b8f34a",
-        weight: 1,
-        opacity: 0.32,
-        fillColor: "#b8f34a",
-        fillOpacity: 0.035,
+        color: "#24b77a",
+        weight: 3,
+        opacity: 0.8,
+        fillColor: "#8af0b5",
+        fillOpacity: 0.12,
         interactive: false,
       }).addTo(layers.reveals);
     });
     if (route.length > 1) {
       const line = L.polyline(route.map((p) => [p.lat, p.lng]), {
-        color: "#d0ff66",
-        weight: 5,
+        color: "#6b5ce7",
+        weight: 7,
         opacity: 0.95,
         lineCap: "round",
       });
@@ -460,7 +460,7 @@ export function ExplorerApp() {
     L.marker([current.lat, current.lng], {
       icon: L.divIcon({
         className: "explorer-marker-wrap",
-        html: `<span class="explorer-marker" style="transform:rotate(${heading}deg)"><i></i></span>`,
+        html: `<span class="explorer-marker"><b>🦊</b><i style="transform:rotate(${heading}deg)"></i></span>`,
         iconSize: [48, 48],
         iconAnchor: [24, 24],
       }),
@@ -635,9 +635,14 @@ export function ExplorerApp() {
             {!tracking && <button className="demo-chip" onClick={() => start(true)}>ESSAI DÉMO</button>}
           </div>
 
+          <div className="map-legend" aria-label="Légende de la carte">
+            <span><i className="legend-revealed" />Exploré</span>
+            <span><i className="legend-hidden" />À découvrir</span>
+          </div>
+
           <div className="discovery-card">
-            <span className="discovery-icon">✦</span>
-            <div><small>AUJOURD’HUI</small><strong>{Math.max(circles.length - 7, 7)} zones dévoilées</strong></div>
+            <span className="discovery-icon">🗺️</span>
+            <div><small>QUÊTE DU JOUR</small><strong>Explore encore {Math.max(1, 10 - Math.max(circles.length - 7, 7))} zones !</strong></div>
             <span className="gain">+{Math.max(80, circles.length * 10)} XP</span>
           </div>
 
