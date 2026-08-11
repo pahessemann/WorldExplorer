@@ -21,7 +21,7 @@ test("keeps exploration offline-first", async () => {
   ]);
   assert.match(storage, /const DB_VERSION = 3/);
   for (const store of ["circles", "trips", "collections", "discoveries", "outbox"]) assert.match(storage, new RegExp(`"${store}"`));
-  assert.match(serviceWorker, /worldexplorer-static-v9/);
+  assert.match(serviceWorker, /worldexplorer-static-v10/);
   assert.match(serviceWorker, /client\.navigate\(client\.url\)/);
   assert.match(serviceWorker, /worldexplorer-osm-v1/);
   assert.match(serviceWorker, /pathname\.startsWith\("\/api\/"\)/);
@@ -32,13 +32,23 @@ test("keeps the map visible and removes decorative controls", async () => {
   const explorer = await source("app/explorer-app.tsx");
   assert.match(explorer, /https:\/\/tile\.openstreetmap\.org\/\{z\}\/\{x\}\/\{y\}\.png/);
   assert.match(explorer, /className: "cartoon-map-tiles"/);
-  assert.match(explorer, /fillOpacity: 0\.28/);
+  assert.match(explorer, /fillOpacity: 0\.58/);
   assert.match(await source("app/globals.css"), /saturate\(1\.38\).*sepia\(\.06\)/s);
   assert.doesNotMatch(explorer, /Radar des découvertes|RÉCLAMER|map-layer-control/);
   assert.match(explorer, /Aucune énergie, aucun booster et aucune zone payante/);
   assert.match(explorer, /mystery-marker/);
   assert.match(explorer, /collectible-marker/);
   assert.match(explorer, /L\.geoJSON/);
+  assert.match(explorer, /mergeRevealCircles/);
+  assert.doesNotMatch(explorer, /circles\.forEach\(\(circle\).*L\.circle/s);
+});
+
+test("merges overlapping reveals into unique outlined zones", async () => {
+  const zones = await source("app/explorer/exploration-zones.ts");
+  assert.match(zones, /function traceRings/);
+  assert.match(zones, /export function mergeRevealCircles/);
+  assert.match(zones, /const cells = new Set/);
+  assert.match(zones, /smoothRing/);
 });
 
 test("loads real French commune boundaries and computes territory progress", async () => {
@@ -47,6 +57,20 @@ test("loads real French commune boundaries and computes territory progress", asy
   assert.match(regions, /geometry: "contour"/);
   assert.match(regions, /exploredRegionPercent/);
   assert.match(regions, /generateRegionCollectibles/);
+  assert.match(regions, /loadFrenchScopes/);
+  assert.match(regions, /exploredScopePercent/);
+});
+
+test("ships country, continent and world zoom scopes", async () => {
+  const [explorer, world, countries] = await Promise.all([
+    source("app/explorer-app.tsx"),
+    source("app/explorer/world.ts"),
+    source("public/data/countries-50m.json"),
+  ]);
+  assert.match(explorer, /scopeLevelForZoom/);
+  for (const level of ["world", "continent", "country", "region", "department", "commune"]) assert.match(explorer, new RegExp(`"${level}"`));
+  assert.match(world, /loadWorldScopes/);
+  assert.equal(JSON.parse(countries).type, "Topology");
 });
 
 test("enforces the 50 metre reveal model", async () => {

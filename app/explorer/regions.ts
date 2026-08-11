@@ -1,11 +1,11 @@
 import { distanceBetween } from "./geo";
-import type { LngLat, Point, RegionBoundary, RegionGeometry, RegionalCollectible, Reveal } from "./types";
+import type { ExplorationScope, LngLat, Point, RegionBoundary, RegionGeometry, RegionalCollectible, Reveal } from "./types";
 
 const EARTH_RADIUS = 6_378_137;
 
 type RegionFeature = {
   type: "Feature";
-  properties: { code?: string; nom?: string; codesPostaux?: string[] };
+  properties: { code?: string; nom?: string; codesPostaux?: string[]; codeDepartement?: string; codeRegion?: string };
   geometry: RegionGeometry;
 };
 
@@ -69,7 +69,7 @@ export async function fetchRegionAt(point: Pick<Point, "lat" | "lng">): Promise<
   const query = new URLSearchParams({
     lat: String(point.lat),
     lon: String(point.lng),
-    fields: "nom,code,codesPostaux",
+    fields: "nom,code,codesPostaux,codeDepartement,codeRegion",
     format: "geojson",
     geometry: "contour",
   });
@@ -85,10 +85,48 @@ export async function fetchRegionAt(point: Pick<Point, "lat" | "lng">): Promise<
     code: feature.properties.code,
     name: feature.properties.nom,
     postcodes: feature.properties.codesPostaux ?? [],
+    departmentCode: feature.properties.codeDepartement ?? feature.properties.code.slice(0, 2),
+    regionCode: feature.properties.codeRegion ?? "11",
+    countryCode: "250",
+    continent: "Europe",
     geometry: feature.geometry,
     areaM2: geometryArea(feature.geometry),
     fetchedAt: Date.now(),
   };
+}
+
+async function fetchFrenchBoundary(level: "department" | "region", code: string): Promise<ExplorationScope> {
+  const resource = level === "department" ? "departements" : "regions";
+  const query = new URLSearchParams({ fields: "nom,code", format: "geojson", geometry: "contour" });
+  const response = await fetch(`https://geo.api.gouv.fr/${resource}/${encodeURIComponent(code)}?${query}`);
+  if (!response.ok) throw new Error("Découpage administratif indisponible");
+  const payload = await response.json() as RegionFeature | { features?: RegionFeature[] };
+  const feature = (payload as { features?: RegionFeature[] }).features?.[0] ?? (payload as RegionFeature);
+  if (!feature?.geometry || !feature.properties.nom) throw new Error("Contour administratif introuvable");
+  return {
+    id: `scope-${level}-${code}`,
+    level,
+    code,
+    name: feature.properties.nom,
+    geometry: feature.geometry,
+    areaM2: geometryArea(feature.geometry),
+  };
+}
+
+export async function loadFrenchScopes(commune: RegionBoundary) {
+  const [department, administrativeRegion] = await Promise.all([
+    fetchFrenchBoundary("department", commune.departmentCode),
+    fetchFrenchBoundary("region", commune.regionCode),
+  ]);
+  const communeScope: ExplorationScope = {
+    id: `scope-commune-${commune.code}`,
+    level: "commune",
+    code: commune.postcodes[0] ?? commune.code,
+    name: commune.name,
+    geometry: commune.geometry,
+    areaM2: commune.areaM2,
+  };
+  return { commune: communeScope, department, region: administrativeRegion };
 }
 
 function seededRandom(seedText: string) {
@@ -140,8 +178,12 @@ export function generateRegionCollectibles(region: RegionBoundary): RegionalColl
 }
 
 export function exploredRegionPercent(region: RegionBoundary, circles: Reveal[]) {
-  if (!region.areaM2 || !circles.length) return 0;
-  const bounds = geometryBounds(region.geometry);
+  return exploredGeometryPercent(region.geometry, region.areaM2, circles);
+}
+
+function exploredGeometryPercent(geometry: RegionGeometry, areaM2: number, circles: Reveal[]) {
+  if (!areaM2 || !circles.length) return 0;
+  const bounds = geometryBounds(geometry);
   const referenceLat = (bounds.minLat + bounds.maxLat) / 2;
   const metersPerLng = 111_320 * Math.cos(referenceLat * Math.PI / 180);
   const cellSize = 25;
@@ -162,11 +204,17 @@ export function exploredRegionPercent(region: RegionBoundary, circles: Reveal[])
           lng: ((gridX + 0.5) * cellSize) / metersPerLng,
           lat: ((gridY + 0.5) * cellSize) / 111_320,
         };
-        if (distanceBetween(circle, sample) <= circle.radius && pointInGeometry(sample, region.geometry)) {
+        if (distanceBetween(circle, sample) <= circle.radius && pointInGeometry(sample, geometry)) {
           visited.add(`${gridX}:${gridY}`);
         }
       }
     }
   }
-  return Math.min(100, visited.size * cellSize * cellSize / region.areaM2 * 100);
+  return Math.min(100, visited.size * cellSize * cellSize / areaM2 * 100);
+}
+
+export function exploredScopePercent(scope: ExplorationScope, circles: Reveal[], mergedAreaM2: number) {
+  if (!scope.areaM2) return 0;
+  if (!scope.geometry) return Math.min(100, mergedAreaM2 / scope.areaM2 * 100);
+  return exploredGeometryPercent(scope.geometry, scope.areaM2, circles);
 }

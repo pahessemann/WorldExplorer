@@ -64,9 +64,30 @@ export type RegionBoundary = {
   code: string;
   name: string;
   postcodes: string[];
+  departmentCode: string;
+  regionCode: string;
+  countryCode: "250";
+  continent: "Europe";
   geometry: RegionGeometry;
   areaM2: number;
   fetchedAt: number;
+};
+
+export type TerritoryLevel = "world" | "continent" | "country" | "region" | "department" | "commune";
+
+export type ExplorationScope = {
+  id: string;
+  level: TerritoryLevel;
+  code: string;
+  name: string;
+  areaM2: number;
+  geometry?: RegionGeometry;
+};
+
+export type ExplorationZoneModel = {
+  rings: Array<Array<[number, number]>>;
+  areaM2: number;
+  cellCount: number;
 };
 
 export type RegionalCollectible = {

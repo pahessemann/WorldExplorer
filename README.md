@@ -10,6 +10,8 @@ Le produit reprend la boucle d’exploration « fog of world » : marcher, rév�
 - Brouillard de guerre translucide : les villes et les routes OpenStreetMap restent lisibles.
 - Contour réel de la commune française détectée par GPS, avec son code postal.
 - Pourcentage du territoire exploré calculé à partir des zones dévoilées sans recompter leurs chevauchements.
+- Cercles qui se chevauchent fusionnés en zones continues avec un seul contour extérieur.
+- Progression multi-échelle pilotée par le zoom : commune, département, région, pays, continent et monde.
 - Trouvailles géolocalisées réparties dans chaque commune et sauvegardées hors ligne puis dans D1.
 - Trajets enregistrés, consultables sur la carte et exportables en JSON.
 - Fonctionnement offline-first avec IndexedDB et file de synchronisation.
@@ -34,6 +36,7 @@ drizzle/                   migrations SQL versionnées
 public/
   sw.js                    cache PWA
   vendor/leaflet.js        moteur cartographique local
+  data/                    contours mondiaux simplifiés Natural Earth
 worker/
   index.ts                 worker Cloudflare
 ```

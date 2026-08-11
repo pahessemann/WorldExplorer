@@ -2,15 +2,42 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { baseCards, demoPath, GPS_INTERVAL, PARIS, REVEAL_DISTANCE } from "./explorer/demo-data";
-import { circleRing, distanceBetween, formatDistance, formatTime, routeDistance } from "./explorer/geo";
+import { mergeRevealCircles } from "./explorer/exploration-zones";
+import { distanceBetween, formatDistance, formatTime, routeDistance } from "./explorer/geo";
 import { loadLeaflet } from "./explorer/leaflet";
-import { exploredRegionPercent, fetchRegionAt, generateRegionCollectibles, geometryBounds, pointInGeometry } from "./explorer/regions";
+import { exploredRegionPercent, exploredScopePercent, fetchRegionAt, generateRegionCollectibles, geometryBounds, loadFrenchScopes, pointInGeometry } from "./explorer/regions";
 import { deleteRecord, mergeById, putRecord, readAll } from "./explorer/storage";
-import type { CityCard, Collection, CollectibleDiscovery, Point, RegionBoundary, RegionalCollectible, Reveal, Tab, Trip } from "./explorer/types";
+import type { CityCard, Collection, CollectibleDiscovery, ExplorationScope, Point, RegionBoundary, RegionalCollectible, Reveal, Tab, TerritoryLevel, Trip } from "./explorer/types";
+import { loadWorldScopes } from "./explorer/world";
 import { flushOutbox, pullCloudState, pullCommunityCards, redeemQrCode, syncCircle, syncCollection, syncDiscovery, syncProposal, syncTrip, syncVote } from "./sync";
 
 function NavIcon({ name }: { name: Tab }) {
   return <span className={`nav-glyph nav-glyph-${name}`} aria-hidden="true" />;
+}
+
+const scopeLabels: Record<TerritoryLevel, string> = {
+  world: "MONDE",
+  continent: "CONTINENT",
+  country: "PAYS",
+  region: "RÉGION",
+  department: "DÉPARTEMENT",
+  commune: "COMMUNE",
+};
+
+function scopeLevelForZoom(zoom: number): TerritoryLevel {
+  if (zoom <= 3) return "world";
+  if (zoom <= 5) return "continent";
+  if (zoom <= 7) return "country";
+  if (zoom <= 9) return "region";
+  if (zoom <= 12) return "department";
+  return "commune";
+}
+
+function formatExplorationPercent(value: number) {
+  if (!value) return "0%";
+  if (value < 0.000001) return `${value.toExponential(2)}%`;
+  if (value < 0.01) return `${value.toFixed(6)}%`;
+  return `${value.toFixed(2)}%`;
 }
 
 export function ExplorerApp() {
@@ -39,6 +66,8 @@ export function ExplorerApp() {
   const [mapReady, setMapReady] = useState(false);
   const [mapStatus, setMapStatus] = useState<"loading" | "ready" | "error">("loading");
   const [mapAttempt, setMapAttempt] = useState(0);
+  const [zoom, setZoom] = useState(16);
+  const [scopes, setScopes] = useState<Partial<Record<TerritoryLevel, ExplorationScope>>>({});
   const [syncState, setSyncState] = useState<"syncing" | "synced" | "offline">("syncing");
   const mapRef = useRef<unknown>(null);
   const layersRef = useRef<Record<string, unknown>>({});
@@ -52,6 +81,17 @@ export function ExplorerApp() {
   const unlockedRef = useRef(new Set(baseCards.filter((card) => card.state === "collected").map((card) => card.id)));
   const regionCollectibles = useMemo(() => region ? generateRegionCollectibles(region) : [], [region]);
   const discoveredIds = useMemo(() => new Set(discoveries.map((discovery) => discovery.id)), [discoveries]);
+  const mergedZones = useMemo(() => mergeRevealCircles(circles), [circles]);
+  const communeScope = useMemo<ExplorationScope | null>(() => region ? ({
+    id: `scope-commune-${region.code}`,
+    level: "commune",
+    code: region.postcodes[0] ?? region.code,
+    name: region.name,
+    areaM2: region.areaM2,
+    geometry: region.geometry,
+  }) : null, [region]);
+  const requestedScopeLevel = scopeLevelForZoom(zoom);
+  const activeScope = scopes[requestedScopeLevel] ?? communeScope;
 
   const unlockCard = useCallback((cardId: string, method: Collection["method"], message: string) => {
     if (unlockedRef.current.has(cardId)) return false;
@@ -131,7 +171,7 @@ export function ExplorerApp() {
           setDiscoveries(savedDiscoveries);
         }
         const cachedRegion = metadata.find((item) => item.id === "active-region");
-        if (cachedRegion?.geometry) {
+        if (cachedRegion?.geometry && cachedRegion.departmentCode && cachedRegion.regionCode) {
           setRegion(cachedRegion);
           setRegionStatus("ready");
         }
@@ -234,6 +274,23 @@ export function ExplorerApp() {
     void refreshRegion(target);
   }, [position, region, refreshRegion, storageReady]);
 
+  useEffect(() => {
+    if (!region) return;
+    let cancelled = false;
+    const regionBounds = geometryBounds(region.geometry);
+    const referencePoint = {
+      lat: (regionBounds.minLat + regionBounds.maxLat) / 2,
+      lng: (regionBounds.minLng + regionBounds.maxLng) / 2,
+    };
+    void loadFrenchScopes(region).then((french) => {
+      if (!cancelled) setScopes((current) => ({ ...current, ...french }));
+    }).catch(() => undefined);
+    void loadWorldScopes(referencePoint).then((world) => {
+      if (!cancelled) setScopes((current) => ({ ...current, ...world }));
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [region]);
+
   const revealPoint = useCallback((point: Point) => {
     setPosition(point);
     if (point.heading >= 0) setHeading(point.heading);
@@ -329,15 +386,16 @@ export function ExplorerApp() {
     void loadLeaflet().then(() => {
       if (cancelled || !mapNodeRef.current || mapRef.current || !window.L) return;
       const L = window.L as unknown as {
-        map: (node: HTMLElement, options: object) => { setView: (p: number[], z: number) => unknown; invalidateSize: () => void; remove: () => void };
+        map: (node: HTMLElement, options: object) => { setView: (p: number[], z: number) => unknown; invalidateSize: () => void; remove: () => void; on: (event: string, callback: () => void) => void; getZoom: () => number };
         tileLayer: (url: string, options: object) => { addTo: (map: unknown) => unknown; on: (event: string, callback: () => void) => void };
         layerGroup: () => { addTo: (map: unknown) => { clearLayers: () => void } };
       };
       const map = L.map(mapNodeRef.current, { zoomControl: false, attributionControl: false });
       map.setView([PARIS.lat, PARIS.lng], 16);
+      map.on("zoomend", () => setZoom(Math.round(map.getZoom())));
       const tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
-        minZoom: 3,
+        minZoom: 2,
         crossOrigin: true,
         className: "cartoon-map-tiles",
       });
@@ -391,36 +449,44 @@ export function ExplorerApp() {
     Object.values(layers).forEach((layer) => layer.clearLayers());
 
     const world = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];
-    L.polygon([world, ...circles.map(circleRing)], {
+    L.polygon([world, ...mergedZones.rings], {
       stroke: false,
-      fillColor: "#476275",
-      fillOpacity: 0.28,
+      fillColor: "#203746",
+      fillOpacity: 0.58,
       fillRule: "evenodd",
       interactive: false,
     }).addTo(layers.fog);
-    circles.forEach((circle) => {
-      L.circle([circle.lat, circle.lng], {
-        radius: 50,
-        color: "#327052",
-        weight: 3,
-        opacity: 0.78,
-        fillColor: "#b9f29a",
-        fillOpacity: 0.24,
+    mergedZones.rings.forEach((ring) => {
+      L.polygon(ring, {
+        color: "#194e34",
+        weight: 6,
+        opacity: 0.92,
+        fillColor: "#aaf08f",
+        fillOpacity: 0.36,
+        lineJoin: "round",
+        interactive: false,
+      }).addTo(layers.reveals);
+      L.polygon(ring, {
+        color: "#c9ffae",
+        weight: 2,
+        opacity: 0.95,
+        fillOpacity: 0,
+        lineJoin: "round",
         interactive: false,
       }).addTo(layers.reveals);
     });
-    if (region) {
-      const feature = { type: "Feature", properties: {}, geometry: region.geometry };
+    if (activeScope?.geometry) {
+      const feature = { type: "Feature", properties: {}, geometry: activeScope.geometry };
       L.geoJSON(feature, {
         interactive: false,
-        style: { color: "#24384f", weight: 8, opacity: 0.9, dashArray: "15 8", fillOpacity: 0 },
+        style: { color: "#14283d", weight: 7, opacity: 0.88, dashArray: activeScope.level === "commune" ? "15 8" : undefined, fillOpacity: 0 },
       }).addTo(layers.territory);
       L.geoJSON(feature, {
         interactive: false,
-        style: { color: "#fff8d7", weight: 4, opacity: 1, dashArray: "11 12", fillOpacity: 0 },
+        style: { color: "#ffd95f", weight: 3, opacity: 1, dashArray: activeScope.level === "commune" ? "11 12" : undefined, fillOpacity: 0 },
       }).addTo(layers.territory);
     }
-    cards.forEach((card) => {
+    if (zoom >= 11) cards.forEach((card) => {
       if (card.latitude == null || card.longitude == null || card.state === "proposal") return;
       const found = card.state === "collected";
       L.marker([card.latitude, card.longitude], {
@@ -432,7 +498,7 @@ export function ExplorerApp() {
         }),
       }).addTo(layers.mysteries);
     });
-    regionCollectibles.forEach((collectible) => {
+    if (zoom >= 11) regionCollectibles.forEach((collectible) => {
       const found = discoveredIds.has(collectible.id);
       L.marker([collectible.lat, collectible.lng], {
         icon: L.divIcon({
@@ -468,7 +534,7 @@ export function ExplorerApp() {
         }),
       }).addTo(layers.marker);
     }
-  }, [circles, route, position, heading, tab, mapReady, cards, region, regionCollectibles, discoveredIds]);
+  }, [mergedZones, route, position, heading, tab, mapReady, cards, activeScope, regionCollectibles, discoveredIds, zoom]);
 
   const start = (demo = false) => {
     setDemoMode(demo);
@@ -535,10 +601,14 @@ export function ExplorerApp() {
     else map?.zoomOut?.();
   };
 
-  const showRegion = () => {
-    if (!region) return;
-    const bounds = geometryBounds(region.geometry);
+  const showScope = () => {
+    if (!activeScope) return;
     const map = mapRef.current as { fitBounds?: (bounds: number[][], options?: object) => void } | null;
+    if (!activeScope.geometry) {
+      map?.fitBounds?.([[-58, -178], [78, 178]], { padding: [20, 20] });
+      return;
+    }
+    const bounds = geometryBounds(activeScope.geometry);
     map?.fitBounds?.([[bounds.minLat, bounds.minLng], [bounds.maxLat, bounds.maxLng]], { padding: [28, 28] });
   };
 
@@ -625,6 +695,7 @@ export function ExplorerApp() {
   const totalCircles = circles.length + trips.reduce((sum, trip) => sum + trip.circles, 0);
   const collected = cards.filter((card) => card.state === "collected").length;
   const regionPercent = useMemo(() => region ? exploredRegionPercent(region, circles) : 0, [region, circles]);
+  const scopePercent = useMemo(() => activeScope ? exploredScopePercent(activeScope, circles, mergedZones.areaM2) : 0, [activeScope, circles, mergedZones.areaM2]);
   const regionalFound = regionCollectibles.filter((collectible) => discoveredIds.has(collectible.id)).length;
   const exploredCities = new Set([
     ...cards.filter((card) => card.state === "collected").map((card) => card.city),
@@ -675,7 +746,7 @@ export function ExplorerApp() {
           <a className="osm-credit" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap</a>
           <header className="map-header">
             <button className="map-brand" onClick={() => setTab("map")} aria-label="Recentrer sur la carte"><span>🌍</span><b>WorldExplorer</b></button>
-            <div className="map-live-status"><i className={gpsState === "live" ? "active" : ""} /><span>{region ? `${region.name} · ${regionPercent.toFixed(2)}%` : `${circles.length} fragments`} · {regionalFound}/{regionCollectibles.length} trouvailles</span><em className={`sync-state ${syncState}`}>{syncState === "synced" ? "Sauvegardé" : syncState === "syncing" ? "Synchronisation" : "Hors ligne"}</em></div>
+            <div className="map-live-status"><i className={gpsState === "live" ? "active" : ""} /><span>{activeScope ? `${scopeLabels[activeScope.level]} · ${activeScope.name} · ${formatExplorationPercent(scopePercent)}` : `${mergedZones.rings.length} zones explorées`}</span><em className={`sync-state ${syncState}`}>{syncState === "synced" ? "Sauvegardé" : syncState === "syncing" ? "Synchronisation" : "Hors ligne"}</em></div>
           </header>
 
           {mapStatus !== "ready" && <div className={`map-state map-state-${mapStatus}`}>
@@ -694,15 +765,15 @@ export function ExplorerApp() {
 
           <div className="map-legend" aria-label="Légende de la carte">
             <span><i className="legend-revealed" />Dévoilé</span>
-            <span><i className="legend-hidden" />Brouillard</span>
-            <span><i className="legend-territory" />Commune</span>
+            <span><i className="legend-hidden" />Non visité</span>
+            <span><i className="legend-territory" />{activeScope ? scopeLabels[activeScope.level].toLowerCase() : "territoire"}</span>
           </div>
 
           <div className="explore-panel">
-            {region ? <div className="territory-progress">
-              <div className="territory-heading"><span className="territory-icon">?</span><div><small>COMMUNE · {region.postcodes[0] ?? region.code}</small><strong>{region.name}</strong></div><b>{regionPercent.toFixed(2)}%</b><button onClick={showRegion}>Voir tout</button></div>
-              <div className="territory-track"><i style={{ width: `${Math.max(regionPercent, 0.6)}%` }} /></div>
-              <small>{regionalFound}/{regionCollectibles.length} trouvailles collectées dans ce territoire</small>
+            {activeScope ? <div className="territory-progress">
+              <div className="territory-heading"><span className="territory-icon">{activeScope.level === "world" ? "◎" : activeScope.level === "continent" ? "◇" : "?"}</span><div><small>{scopeLabels[activeScope.level]} · {activeScope.code}</small><strong>{activeScope.name}</strong></div><b>{formatExplorationPercent(scopePercent)}</b><button onClick={showScope}>Voir tout</button></div>
+              <div className="territory-track"><i style={{ width: `${Math.max(scopePercent, 0.6)}%` }} /></div>
+              <small>Zoom {zoom} · {mergedZones.rings.length} zone{mergedZones.rings.length > 1 ? "s" : ""} fusionnée{mergedZones.rings.length > 1 ? "s" : ""} · {regionalFound}/{regionCollectibles.length} trouvailles locales</small>
             </div> : <div className="territory-progress territory-loading"><b>{regionStatus === "unavailable" ? "Contour communal disponible en France" : "Recherche du territoire…"}</b></div>}
             {!circles.length && !tracking && <p className="first-adventure">Chaque pas efface le brouillard. Aucun pass, aucune énergie à acheter.</p>}
             <div className="live-metrics">

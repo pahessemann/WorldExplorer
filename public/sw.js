@@ -1,6 +1,6 @@
-const STATIC_CACHE = "worldexplorer-static-v9";
+const STATIC_CACHE = "worldexplorer-static-v10";
 const TILE_CACHE = "worldexplorer-osm-v1";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg", "/vendor/leaflet.js"];
+const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg", "/vendor/leaflet.js", "/data/countries-50m.json"];
 const MAX_TILE_ENTRIES = 500;
 
 self.addEventListener("install", (event) => {
@@ -61,6 +61,10 @@ self.addEventListener("fetch", (event) => {
   }
   if (url.hostname === "tile.openstreetmap.org" || url.hostname.endsWith(".tile.openstreetmap.org")) {
     event.respondWith(tileFirst(event.request));
+    return;
+  }
+  if (url.hostname === "geo.api.gouv.fr") {
+    event.respondWith(networkFirst(event.request));
     return;
   }
   if (event.request.mode === "navigate") {
