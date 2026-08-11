@@ -246,6 +246,7 @@ export function ExplorerApp() {
   const [installPrompt, setInstallPrompt] = useState<Event | null>(null);
   const [selectedTrip, setSelectedTrip] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(16);
   const mapRef = useRef<unknown>(null);
   const layersRef = useRef<Record<string, unknown>>({});
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
@@ -431,26 +432,26 @@ export function ExplorerApp() {
     const world = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];
     L.polygon([world, ...circles.map(circleRing)], {
       stroke: false,
-      fillColor: "#7883bd",
-      fillOpacity: 0.58,
+      fillColor: "#35494a",
+      fillOpacity: 0.88,
       fillRule: "evenodd",
       interactive: false,
     }).addTo(layers.fog);
     circles.forEach((circle) => {
       L.circle([circle.lat, circle.lng], {
         radius: 50,
-        color: "#24b77a",
-        weight: 3,
-        opacity: 0.8,
-        fillColor: "#8af0b5",
-        fillOpacity: 0.12,
+        color: "#a9e9a0",
+        weight: 1,
+        opacity: 0.35,
+        fillColor: "#a9e9a0",
+        fillOpacity: 0.72,
         interactive: false,
       }).addTo(layers.reveals);
     });
     if (route.length > 1) {
       const line = L.polyline(route.map((p) => [p.lat, p.lng]), {
-        color: "#6b5ce7",
-        weight: 7,
+        color: "#aeb9ce",
+        weight: 6,
         opacity: 0.95,
         lineCap: "round",
       });
@@ -460,7 +461,7 @@ export function ExplorerApp() {
     L.marker([current.lat, current.lng], {
       icon: L.divIcon({
         className: "explorer-marker-wrap",
-        html: `<span class="explorer-marker"><b>🦊</b><i style="transform:rotate(${heading}deg)"></i></span>`,
+        html: `<span class="explorer-marker"><b></b><i style="transform:rotate(${heading}deg)"></i></span>`,
         iconSize: [48, 48],
         iconAnchor: [24, 24],
       }),
@@ -518,6 +519,13 @@ export function ExplorerApp() {
       },
       { enableHighAccuracy: true, timeout: 10_000 },
     );
+  };
+
+  const changeZoom = (direction: 1 | -1) => {
+    const map = mapRef.current as { zoomIn?: () => void; zoomOut?: () => void; getZoom?: () => number } | null;
+    if (direction > 0) map?.zoomIn?.();
+    else map?.zoomOut?.();
+    window.setTimeout(() => setZoomLevel(map?.getZoom?.() ?? zoomLevel + direction), 80);
   };
 
   const vote = (id: string) => {
@@ -620,20 +628,30 @@ export function ExplorerApp() {
           <div ref={mapNodeRef} className="map-canvas" aria-label="Carte de Paris avec zones explorées" />
           <div className="map-vignette" />
           <header className="map-topbar">
-            <button className="mobile-brand" aria-label="WorldExplorer"><span className="brand-mark"><i /></span></button>
-            <div className="place-pill">
-              <span className="live-pulse" />
-              <div><small>{gpsState === "live" ? "POSITION EN DIRECT" : "EXPLORATION DU JOUR"}</small><strong>Paris, France</strong></div>
-              <button aria-label="Choisir une ville">⌄</button>
-            </div>
+            <button className="map-help" onClick={() => setToast("Marchez pour agrandir la zone verte et dévoiler la carte")}>?</button>
+            <div className="map-city-tag"><span className="live-pulse" /><b>Paris</b><small>{gpsState === "live" ? "GPS EN DIRECT" : "MODE EXPLORATION"}</small></div>
             <button className="round-control avatar-control" onClick={() => setTab("profile")} aria-label="Ouvrir le profil">PH<span /></button>
           </header>
 
+          <div className="map-tools-left" aria-label="Outils de carte">
+            <button onClick={() => setToast("Radar des découvertes activé")} aria-label="Radar">◉</button>
+            <button onClick={locate} aria-label="Activer le GPS"><span>⚡</span><small>GPS</small></button>
+            <div className="zoom-stack">
+              <button onClick={() => changeZoom(1)} aria-label="Zoomer">+</button>
+              <b>{zoomLevel.toFixed(1)}</b>
+              <button onClick={() => changeZoom(-1)} aria-label="Dézoomer">−</button>
+            </div>
+          </div>
+
           <div className="map-actions">
-            <button className="round-control" onClick={locate} aria-label="Me localiser"><span className="locate-icon" /></button>
+            <button className="round-control map-layer-control" onClick={() => setToast("Carte des découvertes affichée")} aria-label="Afficher la carte">▱</button>
             <button className="round-control compass-control" aria-label={`Direction ${Math.round(heading)} degrés`}><span style={{ transform: `rotate(${heading}deg)` }}>N</span></button>
             {!tracking && <button className="demo-chip" onClick={() => start(true)}>ESSAI DÉMO</button>}
           </div>
+
+          <button className="claim-button" onClick={() => setToast("10 pièces ajoutées à votre collection !")}>
+            <i>✦</i><b>10</b><span>RÉCLAMER</span>
+          </button>
 
           <div className="map-legend" aria-label="Légende de la carte">
             <span><i className="legend-revealed" />Exploré</span>
