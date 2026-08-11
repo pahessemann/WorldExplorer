@@ -32,7 +32,8 @@ export function ExplorerApp() {
   const [installPrompt, setInstallPrompt] = useState<Event | null>(null);
   const [selectedTrip, setSelectedTrip] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState(16);
+  const [mapStatus, setMapStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [mapAttempt, setMapAttempt] = useState(0);
   const [syncState, setSyncState] = useState<"syncing" | "synced" | "offline">("syncing");
   const mapRef = useRef<unknown>(null);
   const layersRef = useRef<Record<string, unknown>>({});
@@ -240,19 +241,32 @@ export function ExplorerApp() {
   useEffect(() => {
     if (tab !== "map" || !mapNodeRef.current) return;
     let cancelled = false;
+    let tileLoaded = false;
+    setMapStatus("loading");
     void loadLeaflet().then(() => {
       if (cancelled || !mapNodeRef.current || mapRef.current || !window.L) return;
       const L = window.L as unknown as {
-        map: (node: HTMLElement, options: object) => { setView: (p: number[], z: number) => unknown; remove: () => void };
-        tileLayer: (url: string, options: object) => { addTo: (map: unknown) => unknown };
+        map: (node: HTMLElement, options: object) => { setView: (p: number[], z: number) => unknown; invalidateSize: () => void; remove: () => void };
+        tileLayer: (url: string, options: object) => { addTo: (map: unknown) => unknown; on: (event: string, callback: () => void) => void };
         layerGroup: () => { addTo: (map: unknown) => { clearLayers: () => void } };
       };
       const map = L.map(mapNodeRef.current, { zoomControl: false, attributionControl: false });
       map.setView([PARIS.lat, PARIS.lng], 16);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      const tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
-        subdomains: "abc",
-      }).addTo(map);
+        minZoom: 3,
+        crossOrigin: true,
+      });
+      tiles.on("tileload", () => {
+        tileLoaded = true;
+        if (!cancelled) setMapStatus("ready");
+      });
+      tiles.on("tileerror", () => {
+        window.setTimeout(() => {
+          if (!cancelled && !tileLoaded) setMapStatus("error");
+        }, 1_200);
+      });
+      tiles.addTo(map);
       mapRef.current = map;
       layersRef.current = {
         fog: L.layerGroup().addTo(map),
@@ -261,6 +275,9 @@ export function ExplorerApp() {
         marker: L.layerGroup().addTo(map),
       };
       setMapReady(true);
+      window.requestAnimationFrame(() => map.invalidateSize());
+    }).catch(() => {
+      if (!cancelled) setMapStatus("error");
     });
     return () => {
       cancelled = true;
@@ -271,7 +288,7 @@ export function ExplorerApp() {
         setMapReady(false);
       }
     };
-  }, [tab]);
+  }, [tab, mapAttempt]);
 
   useEffect(() => {
     if (!mapRef.current || !window.L || tab !== "map") return;
@@ -289,7 +306,7 @@ export function ExplorerApp() {
     L.polygon([world, ...circles.map(circleRing)], {
       stroke: false,
       fillColor: "#263d4b",
-      fillOpacity: 0.56,
+      fillOpacity: 0.28,
       fillRule: "evenodd",
       interactive: false,
     }).addTo(layers.fog);
@@ -300,7 +317,7 @@ export function ExplorerApp() {
         weight: 2,
         opacity: 0.62,
         fillColor: "#a9e9a0",
-        fillOpacity: 0.38,
+        fillOpacity: 0.2,
         interactive: false,
       }).addTo(layers.reveals);
     });
@@ -385,10 +402,9 @@ export function ExplorerApp() {
   };
 
   const changeZoom = (direction: 1 | -1) => {
-    const map = mapRef.current as { zoomIn?: () => void; zoomOut?: () => void; getZoom?: () => number } | null;
+    const map = mapRef.current as { zoomIn?: () => void; zoomOut?: () => void } | null;
     if (direction > 0) map?.zoomIn?.();
     else map?.zoomOut?.();
-    window.setTimeout(() => setZoomLevel(map?.getZoom?.() ?? zoomLevel + direction), 80);
   };
 
   const vote = (id: string) => {
@@ -511,8 +527,6 @@ export function ExplorerApp() {
             </button>
           ))}
         </nav>
-        <div className="rail-level"><span>Niveau {level}</span><b>{levelProgress}%</b><i><em style={{ width: `${levelProgress}%` }} /></i></div>
-        <button className="rail-avatar" onClick={() => setTab("profile")}><span>PH</span><i className="online-dot" /></button>
       </aside>
 
       {tab === "map" && (
@@ -520,52 +534,41 @@ export function ExplorerApp() {
           <div ref={mapNodeRef} className="map-canvas" aria-label="Carte de Paris avec zones explorées" />
           <div className="map-vignette" />
           <a className="osm-credit" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap</a>
-          <header className="map-topbar">
-            <button className="map-help" onClick={() => setToast("Marchez pour agrandir la zone verte et dévoiler la carte")}>?</button>
-            <div className="map-city-tag"><span className="live-pulse" /><b>Paris</b><small>{gpsState === "live" ? "GPS EN DIRECT" : "MODE EXPLORATION"}</small><em className={`sync-state ${syncState}`}>{syncState === "synced" ? "SAUVEGARDÉ" : syncState === "syncing" ? "SYNCHRO…" : "HORS LIGNE"}</em></div>
-            <button className="round-control avatar-control" onClick={() => setTab("profile")} aria-label="Ouvrir le profil">PH<span /></button>
+          <header className="map-header">
+            <button className="map-brand" onClick={() => setTab("map")} aria-label="Recentrer sur la carte"><span>🌍</span><b>WorldExplorer</b></button>
+            <div className="map-live-status"><i className={gpsState === "live" ? "active" : ""} /><span>{gpsState === "live" ? "GPS actif" : "Carte de Paris"}</span><em className={`sync-state ${syncState}`}>{syncState === "synced" ? "Sauvegardé" : syncState === "syncing" ? "Synchronisation" : "Hors ligne"}</em></div>
           </header>
 
-          <div className="map-tools-left" aria-label="Outils de carte">
-            <button onClick={() => setToast("Radar des découvertes activé")} aria-label="Radar">◉</button>
-            <button onClick={locate} aria-label="Activer le GPS"><span>⚡</span><small>GPS</small></button>
-            <div className="zoom-stack">
+          {mapStatus !== "ready" && <div className={`map-state map-state-${mapStatus}`}>
+            {mapStatus === "loading"
+              ? <><span className="map-loader" /><b>Chargement de la carte…</b></>
+              : <><b>La carte n’a pas pu se charger</b><button onClick={() => setMapAttempt((attempt) => attempt + 1)}>Réessayer</button></>}
+          </div>}
+
+          <div className="map-controls" aria-label="Commandes de la carte">
+            <button className="locate-button" onClick={locate} aria-label="Afficher ma position"><span>⌖</span>Ma position</button>
+            <div className="zoom-controls">
               <button onClick={() => changeZoom(1)} aria-label="Zoomer">+</button>
-              <b>{zoomLevel.toFixed(1)}</b>
               <button onClick={() => changeZoom(-1)} aria-label="Dézoomer">−</button>
             </div>
           </div>
 
-          <div className="map-actions">
-            <button className="round-control map-layer-control" onClick={() => setToast("Carte des découvertes affichée")} aria-label="Afficher la carte">▱</button>
-            <button className="round-control compass-control" aria-label={`Direction ${Math.round(heading)} degrés`}><span style={{ transform: `rotate(${heading}deg)` }}>N</span></button>
-            {!tracking && <button className="demo-chip" onClick={() => start(true)}>ESSAI DÉMO</button>}
-          </div>
-
-          <button className="claim-button" onClick={() => setToast("10 pièces ajoutées à votre collection !")}>
-            <i>✦</i><b>10</b><span>RÉCLAMER</span>
-          </button>
-
           <div className="map-legend" aria-label="Légende de la carte">
-            <span><i className="legend-revealed" />Exploré</span>
+            <span><i className="legend-revealed" />Zone explorée</span>
             <span><i className="legend-hidden" />À découvrir</span>
           </div>
 
-          <div className="discovery-card">
-            <span className="discovery-icon">🗺️</span>
-            <div><small>QUÊTE DU JOUR</small><strong>Explore encore {Math.max(0, 10 - circles.length)} zones !</strong></div>
-            <span className="gain">+{Math.max(80, circles.length * 10)} XP</span>
-          </div>
-
-          <div className="exploration-console">
-            <div className="metric"><small>VITESSE</small><strong>{speedKmh.toFixed(1)}</strong><span>km/h</span></div>
-            <div className="metric"><small>DISTANCE</small><strong>{(routeMeters / 1000).toFixed(2)}</strong><span>km</span></div>
+          <div className="explore-panel">
+            <div className="live-metrics">
+              <span><small>Vitesse</small><b>{speedKmh.toFixed(1)} km/h</b></span>
+              <span><small>Distance</small><b>{formatDistance(routeMeters)}</b></span>
+              <span><small>Durée</small><b>{formatTime(elapsed)}</b></span>
+              <span><small>Direction</small><b>{Math.round(heading)}°</b></span>
+            </div>
             <button className={`explore-button ${tracking ? "recording" : ""}`} onClick={() => tracking ? stop() : start(false)}>
-              <span>{tracking ? "■" : "↗"}</span>
-              <div><small>{tracking ? formatTime(elapsed) : "PRÊT À PARTIR"}</small><strong>{tracking ? "Terminer" : "Explorer"}</strong></div>
+              <span>{tracking ? "■" : "▶"}</span><strong>{tracking ? "Terminer" : "Démarrer l’exploration"}</strong>
             </button>
-            <div className="metric"><small>DURÉE</small><strong>{tracking ? formatTime(elapsed).replace(" min", "") : "0"}</strong><span>min</span></div>
-            <div className="metric"><small>DÉVOILÉ</small><strong>{tracking ? route.length : 0}</strong><span>zones</span></div>
+            {!tracking && <button className="demo-link" onClick={() => start(true)}>Tester sans GPS</button>}
           </div>
           {selectedTrip && <button className="history-pill" onClick={() => { setSelectedTrip(null); setRoute([]); }}>× Fermer le trajet affiché</button>}
           <div className={`toast ${toast ? "show" : ""}`} role="status"><span>✓</span>{toast}</div>
@@ -590,8 +593,9 @@ export function ExplorerApp() {
             <article className="mini-stat"><span>◷</span><div><small>TEMPS EN MOUVEMENT</small><strong>{formatTime(totalDuration)}</strong></div></article>
             <article className="mini-stat"><span>◎</span><div><small>ZONES DÉVOILÉES</small><strong>{totalCircles}</strong></div></article>
           </div>
-          <div className="section-heading"><div><small>HISTORIQUE</small><h2>Explorations récentes</h2></div><button>Tout afficher</button></div>
+          <div className="section-heading"><div><small>HISTORIQUE</small><h2>Explorations récentes</h2></div></div>
           <div className="trip-list">
+            {!trips.length && <div className="empty-state"><span>↗</span><h3>Aucun trajet enregistré</h3><p>Démarrez une exploration depuis la carte. Votre trajet apparaîtra ici.</p><button onClick={() => setTab("map")}>Ouvrir la carte</button></div>}
             {trips.map((trip, index) => (
               <article className="trip-row" key={trip.id}>
                 <div className={`trip-map-preview route-${index % 3}`}><span>↗</span><i /></div>
@@ -606,7 +610,7 @@ export function ExplorerApp() {
 
       {tab === "cities" && (
         <section className="content-screen cities-screen">
-          <ContentHeader eyebrow="COLLECTIONNER LE MONDE" title={tabTitle} action="Scanner un QR" onAction={() => setQrOpen(true)} />
+          <ContentHeader eyebrow="COLLECTIONNER LE MONDE" title={tabTitle} action="Débloquer par QR" onAction={() => setQrOpen(true)} />
           <div className="city-hero">
             <div className="city-art"><span>PARIS</span><i className="eiffel">A</i><em>48° 51′ N<br />2° 21′ E</em></div>
             <div className="city-progress">
@@ -632,11 +636,11 @@ export function ExplorerApp() {
 
       {tab === "profile" && (
         <section className="content-screen profile-screen">
-          <ContentHeader eyebrow="EXPLORATEUR DEPUIS 2026" title={tabTitle} action="Réglages" onAction={() => setToast("Les réglages seront synchronisés sur cet appareil")} />
+          <ContentHeader eyebrow="VOTRE PROGRESSION" title={tabTitle} />
           <div className="profile-hero">
             <div className="profile-avatar"><span>PH</span><i>NIV. {level}</i></div>
             <div className="profile-copy"><span>EXPLORATEUR URBAIN</span><h2>Paul H.</h2><p>Paris · France</p><div className="level-line"><i><em style={{ width: `${levelProgress}%` }} /></i><span>{xp % 1_000} / 1 000 XP</span></div></div>
-            <button className="outline-button" onClick={() => installPrompt && (installPrompt as Event & { prompt: () => Promise<void> }).prompt()}>{installPrompt ? "Installer l’app" : "PWA installée"}</button>
+            {installPrompt && <button className="outline-button" onClick={() => (installPrompt as Event & { prompt: () => Promise<void> }).prompt()}>Installer l’app</button>}
           </div>
           <div className="profile-stats">
             <article><span>↗</span><strong>{(totalDistance / 1000).toFixed(1)} km</strong><small>PARCOURUS</small></article>
@@ -646,16 +650,9 @@ export function ExplorerApp() {
           </div>
           <div className="profile-columns">
             <div>
-              <div className="section-heading"><div><small>PROGRESSION</small><h2>Badges récents</h2></div><button>Voir les 14</button></div>
-              <div className="badge-grid">
-                <article><span>✦</span><div><b>Éclaireur</b><small>100 zones dévoilées</small></div></article>
-                <article><span>5K</span><div><b>Grande marche</b><small>5 km sans pause</small></div></article>
-                <article><span>⌁</span><div><b>Flâneur parisien</b><small>10 cartes de Paris</small></div></article>
-              </div>
-            </div>
-            <div>
-              <div className="section-heading"><div><small>COLLECTION</small><h2>Dernières cartes</h2></div><button onClick={() => setTab("cities")}>Tout voir</button></div>
-              <div className="mini-collection">{cards.slice(0, 3).map((card) => <article className={card.tone} key={card.id}><span>{card.icon}</span><small>{card.city}</small><b>{card.title}</b></article>)}</div>
+              <div className="section-heading"><div><small>COLLECTION</small><h2>Cartes débloquées</h2></div><button onClick={() => setTab("cities")}>Voir la collection</button></div>
+              {!collected && <div className="empty-state compact"><p>Explorez la ville pour débloquer votre première carte.</p><button onClick={() => setTab("map")}>Explorer</button></div>}
+              <div className="mini-collection">{cards.filter((card) => card.state === "collected").slice(0, 3).map((card) => <article className={card.tone} key={card.id}><span>{card.icon}</span><small>{card.city}</small><b>{card.title}</b></article>)}</div>
             </div>
           </div>
         </section>
@@ -688,8 +685,8 @@ export function ExplorerApp() {
           <button type="button" className="modal-dismiss" onClick={() => setQrOpen(false)} aria-label="Fermer le scanner QR" />
           <form className="proposal-modal qr-modal" onSubmit={unlockQr}>
             <button type="button" className="modal-close" onClick={() => setQrOpen(false)} aria-label="Fermer">×</button>
-            <span className="modal-eyebrow">DÉBLOCAGE SUR PLACE</span><h2>Scanner un QR</h2><div className="qr-frame"><i /><span>▦</span><small>Placez le code dans le cadre</small></div>
-            <p>Sur cet aperçu, saisissez le code imprimé sous le QR. Essayez <b>PARIS-2026</b>.</p>
+            <span className="modal-eyebrow">DÉBLOCAGE SUR PLACE</span><h2>Code QR</h2>
+            <p>Saisissez le code imprimé sous le QR. Pour tester, utilisez <b>PARIS-2026</b>.</p>
             <label>Code de la carte<input name="code" required placeholder="PARIS-2026" /></label>
             <button className="submit-proposal" type="submit">Débloquer la carte <span>→</span></button>
           </form>
@@ -699,6 +696,6 @@ export function ExplorerApp() {
   );
 }
 
-function ContentHeader({ eyebrow, title, action, onAction }: { eyebrow: string; title: string; action: string; onAction?: () => void }) {
-  return <header className="content-header"><div><span>{eyebrow}</span><h1>{title}</h1></div><button onClick={onAction}>{action}<b>→</b></button></header>;
+function ContentHeader({ eyebrow, title, action, onAction }: { eyebrow: string; title: string; action?: string; onAction?: () => void }) {
+  return <header className="content-header"><div><span>{eyebrow}</span><h1>{title}</h1></div>{action && <button onClick={onAction}>{action}<b>→</b></button>}</header>;
 }

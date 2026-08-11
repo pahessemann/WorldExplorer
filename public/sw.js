@@ -1,4 +1,4 @@
-const STATIC_CACHE = "worldexplorer-static-v5";
+const STATIC_CACHE = "worldexplorer-static-v6";
 const TILE_CACHE = "worldexplorer-osm-v1";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg", "/vendor/leaflet.js"];
 const MAX_TILE_ENTRIES = 500;
@@ -48,17 +48,6 @@ async function networkFirst(request) {
   }
 }
 
-async function staticFirst(request) {
-  const cached = await caches.match(request);
-  if (cached) return cached;
-  const response = await fetch(request);
-  if (response.ok) {
-    const cache = await caches.open(STATIC_CACHE);
-    await cache.put(request, response.clone());
-  }
-  return response;
-}
-
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
@@ -77,5 +66,5 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(networkFirst(event.request));
     return;
   }
-  if (url.origin === self.location.origin) event.respondWith(staticFirst(event.request));
+  if (url.origin === self.location.origin) event.respondWith(networkFirst(event.request));
 });

@@ -21,8 +21,17 @@ test("keeps exploration offline-first", async () => {
   ]);
   assert.match(storage, /const DB_VERSION = 2/);
   for (const store of ["circles", "trips", "collections", "outbox"]) assert.match(storage, new RegExp(`"${store}"`));
+  assert.match(serviceWorker, /worldexplorer-static-v6/);
   assert.match(serviceWorker, /worldexplorer-osm-v1/);
   assert.match(serviceWorker, /pathname\.startsWith\("\/api\/"\)/);
+  assert.match(serviceWorker, /event\.respondWith\(networkFirst\(event\.request\)\)/);
+});
+
+test("keeps the map visible and removes decorative controls", async () => {
+  const explorer = await source("app/explorer-app.tsx");
+  assert.match(explorer, /https:\/\/tile\.openstreetmap\.org\/\{z\}\/\{x\}\/\{y\}\.png/);
+  assert.match(explorer, /fillOpacity: 0\.28/);
+  assert.doesNotMatch(explorer, /Radar des découvertes|RÉCLAMER|map-layer-control/);
 });
 
 test("enforces the 50 metre reveal model", async () => {
