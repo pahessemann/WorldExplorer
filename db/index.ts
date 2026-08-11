@@ -11,3 +11,24 @@ export function getDb() {
 
   return drizzle(env.DB, { schema });
 }
+
+type RuntimeBindings = {
+  DB?: D1Database;
+  UPLOADS?: R2Bucket;
+};
+
+function bindings() {
+  return env as unknown as RuntimeBindings;
+}
+
+export function getD1() {
+  const database = bindings().DB;
+  if (!database) throw new Error("La base de données WorldExplorer est indisponible.");
+  return database;
+}
+
+export function getUploads() {
+  const bucket = bindings().UPLOADS;
+  if (!bucket) throw new Error("Le stockage d’images WorldExplorer est indisponible.");
+  return bucket;
+}

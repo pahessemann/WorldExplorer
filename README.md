@@ -1,45 +1,57 @@
 # WorldExplorer
 
-WorldExplorer est une PWA mobile d’exploration urbaine. Elle transforme chaque déplacement en progression : un cercle de 50 m révèle la carte autour de l’utilisateur, le trajet est enregistré et des cartes culturelles de ville se débloquent au fil des découvertes.
+WorldExplorer est une PWA mobile d’exploration urbaine. Chaque déplacement révèle un cercle de 50 mètres sur OpenStreetMap, alimente un trajet et peut débloquer des cartes culturelles de ville.
 
-## Fonctionnalités
+## Version exploitable
 
-- Carte Leaflet en temps réel avec brouillard et zones circulaires dévoilées.
-- Suivi GPS via `navigator.geolocation.watchPosition()` toutes les 5 secondes.
-- Trajet courant, distance, vitesse moyenne, durée et nombre de zones.
-- Historique des trajets avec réaffichage sur la carte.
-- Collection de cartes de villes, défis, déblocage géolocalisé et emplacement QR.
-- Propositions communautaires avec image et vote unique par appareil.
-- Profil, statistiques, badges et progression.
-- PWA installable avec cache hors ligne.
-- Mode démo pour tester l’expérience sans partager sa position.
+- GPS réel avec `watchPosition`, vitesse, boussole, distance et durée.
+- Brouillard de guerre translucide : les villes et les routes OpenStreetMap restent lisibles.
+- Trajets enregistrés, consultables sur la carte et exportables en JSON.
+- Fonctionnement offline-first avec IndexedDB et file de synchronisation.
+- Synchronisation anonyme par appareil dans Cloudflare D1.
+- Cartes communautaires, vote unique, validation automatique à 25 votes.
+- Images de propositions stockées dans Cloudflare R2.
+- Déblocage d’une carte par proximité GPS, QR code ou défi de distance.
+- PWA installable avec cache de l’application et des tuiles OpenStreetMap.
+- Mode démo sans partage de position.
 
-## Données et synchronisation
-
-Les cercles, trajets et propositions sont d’abord enregistrés dans IndexedDB (`worldexplorer`). Cette stratégie offline-first permet de continuer à explorer sans réseau.
-
-La synchronisation Supabase est automatique lorsque les deux variables de `.env.example` sont configurées. Le schéma prêt à exécuter se trouve dans `supabase/schema.sql` et contient les tables de zones, trajets, cartes et votes, la vue de popularité, les règles RLS et la validation automatique à 25 votes.
-
-## Démarrage local
-
-```bash
-npm install
-npm run dev
-```
-
-Ouvrez ensuite `http://localhost:3000`. Pour tester le vrai GPS sur mobile, utilisez une origine HTTPS ou `localhost`. Le bouton **Essai démo** anime un parcours parisien sans demander d’autorisation.
-
-## Structure
+## Architecture
 
 ```text
 app/
-  explorer-app.tsx   expérience complète et stockage IndexedDB
-  sync.ts            synchronisation Supabase optionnelle
-  globals.css        interface responsive
+  explorer-app.tsx        interface et orchestration
+  explorer/               géolocalisation, types, IndexedDB, Leaflet
+  api/                     synchronisation, communauté, QR et images
+  sync.ts                  file hors ligne et API cliente
+db/
+  schema.ts                schéma D1 avec Drizzle
+drizzle/                   migrations SQL versionnées
 public/
-  manifest.webmanifest
-  sw.js
-  og.png
-supabase/
-  schema.sql
+  sw.js                    cache PWA
+  vendor/leaflet.js        moteur cartographique local
+worker/
+  index.ts                 worker Cloudflare
 ```
+
+La progression privée est rattachée à un identifiant aléatoire généré et conservé dans le navigateur. Aucun compte n’est requis. Les données sont d’abord écrites dans IndexedDB, puis envoyées à D1 dès que la connexion revient.
+
+## Démarrage local
+
+Prérequis : Node.js 22.13 ou supérieur.
+
+```bash
+npm install
+npm run db:generate
+npm run dev
+```
+
+Ouvrez `http://localhost:3000`. La géolocalisation réelle nécessite HTTPS ou `localhost`.
+
+## Validation
+
+```bash
+npm run lint
+npm test
+```
+
+`npm test` compile la version de production puis vérifie les invariants de persistance, de synchronisation et de dévoilement.

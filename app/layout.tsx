@@ -40,13 +40,7 @@ export default function RootLayout({
   return (
     <html lang="fr">
       <head>
-        <link rel="preconnect" href="https://a.basemaps.cartocdn.com" />
-        <link
-          rel="stylesheet"
-          href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-          integrity="sha256-p4NxAoJBhIINfQ3ynhZwqJMYsv8nmqDQ1TkKpFM8K00="
-          crossOrigin="anonymous"
-        />
+        <link rel="preconnect" href="https://tile.openstreetmap.org" crossOrigin="anonymous" />
       </head>
       <body>{children}</body>
     </html>

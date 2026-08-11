@@ -1,85 +1,137 @@
-type SyncableCircle = { id: string; lat: number; lng: number; radius: number; createdAt: number };
-type SyncableTrip = { id: string; name: string; city: string; startedAt: number; duration: number; distance: number; circles: number; points: unknown[] };
+import { deleteRecord, getDeviceId, queueOperation, readAll } from "./explorer/storage";
+import type { CityCard, CloudState, Collection, Reveal, SyncOperation, Trip } from "./explorer/types";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-export type CommunityCard = {
+type RemoteCard = {
   id: string;
   city: string;
   title: string;
   description: string;
+  icon: string;
+  tone: string;
+  image_key: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  unlock_radius_m: number;
+  challenge_distance_m: number | null;
+  status: "approved" | "proposed";
   votes: number;
-  status: string;
 };
 
-function deviceId() {
-  const stored = window.localStorage.getItem("worldexplorer-device");
-  if (stored) return stored;
-  const created = crypto.randomUUID();
-  window.localStorage.setItem("worldexplorer-device", created);
-  return created;
+async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error ?? `Erreur réseau (${response.status})`);
+  }
+  return response.json() as Promise<T>;
 }
 
-async function write(table: string, payload: unknown, resolution = "ignore-duplicates") {
-  if (!url || !key) return;
-  await fetch(`${url}/rest/v1/${table}`, {
+async function sendProgress(kind: "circle" | "trip" | "collection", payload: unknown) {
+  const key = kind === "circle" ? "circles" : kind === "trip" ? "trips" : "collections";
+  await requestJson("/api/sync", {
     method: "POST",
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      Prefer: `resolution=${resolution},return=minimal`,
-    },
-    body: JSON.stringify(payload),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ deviceId: getDeviceId(), [key]: [payload] }),
   });
 }
 
-export function syncCircle(circle: SyncableCircle) {
-  return write("explored_circles", {
-    id: circle.id,
-    device_id: deviceId(),
-    latitude: circle.lat,
-    longitude: circle.lng,
-    radius_m: circle.radius,
-    explored_at: new Date(circle.createdAt).toISOString(),
+async function performOperation(kind: SyncOperation["kind"], payload: unknown) {
+  if (kind === "circle" || kind === "trip" || kind === "collection") return sendProgress(kind, payload);
+  if (kind === "vote") {
+    return requestJson("/api/community/vote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceId: getDeviceId(), cardId: payload }),
+    });
+  }
+  const { card, file } = payload as { card: CityCard; file?: File };
+  let imageKey: string | undefined;
+  if (file) {
+    const form = new FormData();
+    form.set("deviceId", getDeviceId());
+    form.set("image", file);
+    const upload = await requestJson<{ key: string }>("/api/uploads", { method: "POST", body: form });
+    imageKey = upload.key;
+  }
+  return requestJson("/api/community", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...card, deviceId: getDeviceId(), imageKey }),
   });
 }
 
-export function syncTrip(trip: SyncableTrip) {
-  return write("trips", {
-    id: trip.id,
-    device_id: deviceId(),
-    name: trip.name,
-    city: trip.city,
-    started_at: new Date(trip.startedAt).toISOString(),
-    duration_seconds: trip.duration,
-    distance_m: trip.distance,
-    circles_count: trip.circles,
-    points: trip.points,
+async function sendOrQueue(kind: SyncOperation["kind"], payload: unknown) {
+  try {
+    if (!navigator.onLine) throw new Error("offline");
+    await performOperation(kind, payload);
+    return true;
+  } catch {
+    await queueOperation(kind, payload);
+    return false;
+  }
+}
+
+export function syncCircle(circle: Reveal) { return sendOrQueue("circle", circle); }
+export function syncTrip(trip: Trip) { return sendOrQueue("trip", trip); }
+export function syncVote(cardId: string) { return sendOrQueue("vote", cardId); }
+export function syncCollection(collection: Collection) { return sendOrQueue("collection", collection); }
+export function syncProposal(card: CityCard, file?: File) { return sendOrQueue("proposal", { card, file }); }
+
+export async function redeemQrCode(code: string) {
+  const result = await requestJson<{ cardId: string }>("/api/community/unlock", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ deviceId: getDeviceId(), code }),
   });
+  return result.cardId;
 }
 
-export function syncVote(cardId: string) {
-  return write("card_votes", { card_id: cardId, device_id: deviceId() });
+export async function flushOutbox() {
+  if (!navigator.onLine) return 0;
+  const pending = (await readAll<SyncOperation>("outbox")).sort((a, b) => a.createdAt - b.createdAt).slice(0, 100);
+  let sent = 0;
+  for (const operation of pending) {
+    try {
+      await performOperation(operation.kind, operation.payload);
+      await deleteRecord("outbox", operation.id);
+      sent += 1;
+    } catch {
+      break;
+    }
+  }
+  return sent;
 }
 
-export function syncProposal(card: { id: string; city: string; title: string; description: string }) {
-  return write("city_cards", {
+export async function pullCommunityCards(): Promise<CityCard[]> {
+  const { cards } = await requestJson<{ cards: RemoteCard[] }>("/api/community");
+  return cards.map((card) => ({
     id: card.id,
     city: card.city,
     title: card.title,
     description: card.description,
-    status: "proposed",
-    author_device_id: deviceId(),
-  });
+    icon: card.icon,
+    tone: card.tone,
+    votes: Number(card.votes),
+    state: card.status === "proposed" ? "proposal" : "locked",
+    requirement: card.status === "proposed" ? "Vote communautaire" : "À découvrir sur place",
+    image: card.image_key ? `/api/uploads/${card.image_key}` : undefined,
+    latitude: card.latitude ?? undefined,
+    longitude: card.longitude ?? undefined,
+    unlockRadius: card.unlock_radius_m,
+    challengeDistance: card.challenge_distance_m ?? undefined,
+  }));
 }
 
-export async function pullCommunityCards(): Promise<CommunityCard[]> {
-  if (!url || !key) return [];
-  const response = await fetch(`${url}/rest/v1/city_card_scores?select=id,city,title,description,votes,status&order=votes.desc`, {
-    headers: { apikey: key, Authorization: `Bearer ${key}` },
-  });
-  if (!response.ok) return [];
-  return response.json() as Promise<CommunityCard[]>;
+export async function pullCloudState(): Promise<CloudState> {
+  const deviceId = getDeviceId();
+  const remote = await requestJson<{
+    circles: Array<{ id: string; latitude: number; longitude: number; radius_m: 50; explored_at: number }>;
+    trips: Array<{ id: string; name: string; city: string; started_at: number; duration_seconds: number; distance_m: number; circles_count: number; points_json: string }>;
+    collections: Array<{ card_id: string; method: Collection["method"]; collected_at: number }>;
+  }>(`/api/sync?deviceId=${encodeURIComponent(deviceId)}`);
+  return {
+    circles: remote.circles.map((item) => ({ id: item.id, lat: item.latitude, lng: item.longitude, radius: 50, createdAt: item.explored_at })),
+    trips: remote.trips.map((item) => ({ id: item.id, name: item.name, city: item.city, startedAt: item.started_at, duration: item.duration_seconds, distance: item.distance_m, circles: item.circles_count, points: JSON.parse(item.points_json) })),
+    collections: remote.collections.map((item) => ({ id: `${item.card_id}-${item.collected_at}`, cardId: item.card_id, method: item.method, collectedAt: item.collected_at })),
+  };
 }

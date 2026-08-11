@@ -1,226 +1,12 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { pullCommunityCards, syncCircle, syncProposal, syncTrip, syncVote } from "./sync";
-
-type Tab = "map" | "trips" | "cities" | "profile";
-type Point = { lat: number; lng: number; ts: number; speed: number; heading: number };
-type Reveal = { id: string; lat: number; lng: number; radius: 50; createdAt: number };
-type Trip = {
-  id: string;
-  name: string;
-  city: string;
-  startedAt: number;
-  duration: number;
-  distance: number;
-  circles: number;
-  points: Point[];
-};
-type CityCard = {
-  id: string;
-  city: string;
-  title: string;
-  description: string;
-  icon: string;
-  votes: number;
-  state: "collected" | "nearby" | "locked" | "proposal";
-  requirement: string;
-  tone: string;
-  image?: string;
-};
-
-declare global {
-  interface Window {
-    L?: Record<string, (...args: unknown[]) => unknown>;
-  }
-}
-
-const PARIS = { lat: 48.85682, lng: 2.34965 };
-const GPS_INTERVAL = 5_000;
-const REVEAL_DISTANCE = 38;
-
-const demoPath: Point[] = [
-  [48.85635, 2.3471], [48.85652, 2.34775], [48.85676, 2.34835],
-  [48.85692, 2.3491], [48.85702, 2.34985], [48.85688, 2.35062],
-  [48.85662, 2.35127], [48.85631, 2.35186], [48.85598, 2.3523],
-].map(([lat, lng], index) => ({
-  lat,
-  lng,
-  ts: Date.now() - (8 - index) * 18_000,
-  speed: 1.32,
-  heading: 82,
-}));
-
-const initialTrips: Trip[] = [
-  {
-    id: "trip-demo-1",
-    name: "Boucle des quais",
-    city: "Paris 4e",
-    startedAt: Date.now() - 86_400_000,
-    duration: 2_580,
-    distance: 3_420,
-    circles: 31,
-    points: demoPath,
-  },
-  {
-    id: "trip-demo-2",
-    name: "Marais au lever du jour",
-    city: "Paris 3e",
-    startedAt: Date.now() - 3 * 86_400_000,
-    duration: 3_060,
-    distance: 4_180,
-    circles: 44,
-    points: demoPath.map((p) => ({ ...p, lat: p.lat + 0.004, lng: p.lng - 0.002 })),
-  },
-  {
-    id: "trip-demo-3",
-    name: "Autour du Panthéon",
-    city: "Paris 5e",
-    startedAt: Date.now() - 6 * 86_400_000,
-    duration: 1_740,
-    distance: 2_310,
-    circles: 24,
-    points: demoPath.map((p) => ({ ...p, lat: p.lat - 0.006, lng: p.lng + 0.003 })),
-  },
-];
-
-const baseCards: CityCard[] = [
-  {
-    id: "card-passage",
-    city: "Paris",
-    title: "Les passages secrets",
-    description: "Galeries vitrées, mosaïques et raccourcis cachés du Paris du XIXe siècle.",
-    icon: "⌁",
-    votes: 284,
-    state: "collected",
-    requirement: "Collectionnée rue Vivienne",
-    tone: "violet",
-  },
-  {
-    id: "card-ourcq",
-    city: "Paris",
-    title: "L’eau sous la ville",
-    description: "Suivez la trace invisible du canal de l’Ourcq jusqu’au cœur de Paris.",
-    icon: "≈",
-    votes: 197,
-    state: "nearby",
-    requirement: "À 320 m · Approchez-vous",
-    tone: "blue",
-  },
-  {
-    id: "card-bievre",
-    city: "Paris",
-    title: "La Bièvre retrouvée",
-    description: "Une rivière disparue, encore lisible dans les rues du 13e arrondissement.",
-    icon: "◇",
-    votes: 143,
-    state: "locked",
-    requirement: "Marchez 5 km dans Paris",
-    tone: "amber",
-  },
-  {
-    id: "card-toits",
-    city: "Paris",
-    title: "Les toits de zinc",
-    description: "Cheminées, mansardes et silhouettes qui dessinent l’horizon parisien.",
-    icon: "⌂",
-    votes: 89,
-    state: "proposal",
-    requirement: "Proposition de Lila M.",
-    tone: "rose",
-  },
-];
-
-function distanceBetween(a: Pick<Point, "lat" | "lng">, b: Pick<Point, "lat" | "lng">) {
-  const r = 6_371_000;
-  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
-  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
-  const lat1 = (a.lat * Math.PI) / 180;
-  const lat2 = (b.lat * Math.PI) / 180;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * r * Math.asin(Math.sqrt(h));
-}
-
-function routeDistance(points: Point[]) {
-  return points.reduce((sum, point, index) =>
-    index ? sum + distanceBetween(points[index - 1], point) : sum, 0);
-}
-
-function circleRing(circle: Reveal) {
-  const points: [number, number][] = [];
-  for (let angle = 0; angle <= 360; angle += 12) {
-    const rad = (angle * Math.PI) / 180;
-    const dLat = (circle.radius / 111_320) * Math.sin(rad);
-    const dLng = (circle.radius / (111_320 * Math.cos((circle.lat * Math.PI) / 180))) * Math.cos(rad);
-    points.push([circle.lat + dLat, circle.lng + dLng]);
-  }
-  return points;
-}
-
-const DB_NAME = "worldexplorer";
-const DB_VERSION = 1;
-
-function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains("circles")) db.createObjectStore("circles", { keyPath: "id" });
-      if (!db.objectStoreNames.contains("trips")) db.createObjectStore("trips", { keyPath: "id" });
-      if (!db.objectStoreNames.contains("proposals")) db.createObjectStore("proposals", { keyPath: "id" });
-      if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta", { keyPath: "id" });
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function dbAll<T>(store: string): Promise<T[]> {
-  const db = await openDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction(store, "readonly").objectStore(store).getAll();
-    request.onsuccess = () => resolve(request.result as T[]);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function dbPut<T>(store: string, value: T) {
-  const db = await openDb();
-  return new Promise<void>((resolve, reject) => {
-    const request = db.transaction(store, "readwrite").objectStore(store).put(value);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
-}
-
-function loadLeaflet() {
-  if (window.L) return Promise.resolve();
-  return new Promise<void>((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>("script[data-leaflet]");
-    if (existing) {
-      existing.addEventListener("load", () => resolve(), { once: true });
-      return;
-    }
-    const script = document.createElement("script");
-    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    script.integrity = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=";
-    script.crossOrigin = "anonymous";
-    script.dataset.leaflet = "true";
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Leaflet indisponible"));
-    document.head.appendChild(script);
-  });
-}
-
-function formatTime(seconds: number) {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return hours ? `${hours} h ${minutes.toString().padStart(2, "0")}` : `${minutes} min`;
-}
-
-function formatDistance(meters: number) {
-  return meters < 1_000 ? `${Math.round(meters)} m` : `${(meters / 1_000).toFixed(1)} km`;
-}
+import { baseCards, demoPath, GPS_INTERVAL, PARIS, REVEAL_DISTANCE } from "./explorer/demo-data";
+import { circleRing, distanceBetween, formatDistance, formatTime, routeDistance } from "./explorer/geo";
+import { loadLeaflet } from "./explorer/leaflet";
+import { deleteRecord, mergeById, putRecord, readAll } from "./explorer/storage";
+import type { CityCard, Collection, Point, Reveal, Tab, Trip } from "./explorer/types";
+import { flushOutbox, pullCloudState, pullCommunityCards, redeemQrCode, syncCircle, syncCollection, syncProposal, syncTrip, syncVote } from "./sync";
 
 function NavIcon({ name }: { name: Tab }) {
   return <span className={`nav-glyph nav-glyph-${name}`} aria-hidden="true" />;
@@ -229,7 +15,7 @@ function NavIcon({ name }: { name: Tab }) {
 export function ExplorerApp() {
   const [tab, setTab] = useState<Tab>("map");
   const [circles, setCircles] = useState<Reveal[]>([]);
-  const [trips, setTrips] = useState<Trip[]>(initialTrips);
+  const [trips, setTrips] = useState<Trip[]>([]);
   const [route, setRoute] = useState<Point[]>([]);
   const [position, setPosition] = useState<Point | null>(null);
   const [tracking, setTracking] = useState(false);
@@ -247,61 +33,126 @@ export function ExplorerApp() {
   const [selectedTrip, setSelectedTrip] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(16);
+  const [syncState, setSyncState] = useState<"syncing" | "synced" | "offline">("syncing");
   const mapRef = useRef<unknown>(null);
   const layersRef = useRef<Record<string, unknown>>({});
   const mapNodeRef = useRef<HTMLDivElement | null>(null);
   const lastGpsRef = useRef(0);
   const demoIndexRef = useRef(0);
+  const cardsRef = useRef<CityCard[]>(baseCards);
+  const unlockedRef = useRef(new Set(baseCards.filter((card) => card.state === "collected").map((card) => card.id)));
+
+  const unlockCard = useCallback((cardId: string, method: Collection["method"], message: string) => {
+    if (unlockedRef.current.has(cardId)) return false;
+    unlockedRef.current.add(cardId);
+    setCards((current) => {
+      const next = current.map((card) => card.id === cardId
+        ? { ...card, state: "collected" as const, requirement: "Dans votre collection" }
+        : card);
+      cardsRef.current = next;
+      return next;
+    });
+    const collection: Collection = {
+      id: `${cardId}-${Date.now()}`,
+      cardId,
+      method,
+      collectedAt: Date.now(),
+    };
+    void putRecord("collections", collection);
+    void syncCollection(collection);
+    setToast(message);
+    return true;
+  }, []);
 
   useEffect(() => {
-    Promise.all([dbAll<Reveal>("circles"), dbAll<Trip>("trips"), dbAll<CityCard>("proposals")])
-      .then(([savedCircles, savedTrips, proposals]) => {
-        if (savedCircles.length) setCircles(savedCircles);
-        else {
-          const seeded = demoPath.slice(0, 7).map((point, index) => ({
-            id: `reveal-demo-${index}`,
-            lat: point.lat,
-            lng: point.lng,
-            radius: 50 as const,
-            createdAt: point.ts,
-          }));
-          setCircles(seeded);
-          seeded.forEach((circle) => void dbPut("circles", circle));
-        }
-        if (savedTrips.length) setTrips(savedTrips.sort((a, b) => b.startedAt - a.startedAt));
-        else initialTrips.forEach((trip) => void dbPut("trips", trip));
+    Promise.all([readAll<Reveal>("circles"), readAll<Trip>("trips"), readAll<CityCard>("proposals"), readAll<Collection>("collections")])
+      .then(([savedCircles, savedTrips, proposals, collections]) => {
+        const realCircles = savedCircles.filter((circle) => !circle.id.startsWith("reveal-demo-"));
+        const realTrips = savedTrips.filter((trip) => !trip.id.startsWith("trip-demo-"));
+        savedCircles.filter((circle) => circle.id.startsWith("reveal-demo-")).forEach((circle) => void deleteRecord("circles", circle.id));
+        savedTrips.filter((trip) => trip.id.startsWith("trip-demo-")).forEach((trip) => void deleteRecord("trips", trip.id));
+        if (realCircles.length) setCircles(realCircles);
+        if (realTrips.length) setTrips(realTrips.sort((a, b) => b.startedAt - a.startedAt));
         if (proposals.length) setCards((current) => [...current, ...proposals]);
+        if (collections.length) {
+          collections.forEach((collection) => unlockedRef.current.add(collection.cardId));
+          setCards((current) => current.map((card) => unlockedRef.current.has(card.id)
+            ? { ...card, state: "collected", requirement: "Dans votre collection" }
+            : card));
+        }
       })
-      .catch(() => setToast("Mode privé actif · stockage temporaire"));
+      .catch(() => setToast("Stockage local indisponible sur ce navigateur"));
 
     const votes = window.localStorage.getItem("worldexplorer-votes");
-    if (votes) setVoted(JSON.parse(votes) as string[]);
+    if (votes) {
+      try {
+        const storedVotes = JSON.parse(votes) as string[];
+        window.setTimeout(() => setVoted(storedVotes), 0);
+      } catch {
+        window.localStorage.removeItem("worldexplorer-votes");
+      }
+    }
     if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/sw.js");
-    void pullCommunityCards().then((remote) => {
-      if (!remote.length) return;
-      setCards((current) => {
-        const merged = new Map(current.map((card) => [card.id, card]));
-        remote.forEach((card) => {
-          const existing = merged.get(card.id);
-          merged.set(card.id, existing ? { ...existing, votes: card.votes } : {
-            ...card,
-            icon: "✦",
-            state: "proposal",
-            requirement: "Proposition de la communauté",
-            tone: "green",
-          });
+    const hydrateCloud = async () => {
+      if (!navigator.onLine) {
+        setSyncState("offline");
+        return;
+      }
+      setSyncState("syncing");
+      try {
+        await flushOutbox();
+        const [remoteCards, cloud] = await Promise.all([pullCommunityCards(), pullCloudState()]);
+        setCircles((current) => {
+          const merged = mergeById(current, cloud.circles);
+          cloud.circles.forEach((circle) => void putRecord("circles", circle));
+          return merged;
         });
-        return [...merged.values()];
-      });
-    });
+        setTrips((current) => {
+          const merged = mergeById(current, cloud.trips).sort((a, b) => b.startedAt - a.startedAt);
+          cloud.trips.forEach((trip) => void putRecord("trips", trip));
+          return merged;
+        });
+        setCards((current) => {
+          const merged = new Map(current.map((card) => [card.id, card]));
+          remoteCards.forEach((card) => {
+            const existing = merged.get(card.id);
+            merged.set(card.id, existing ? { ...card, state: existing.state, requirement: existing.requirement } : card);
+          });
+          cloud.collections.forEach((collection) => {
+            unlockedRef.current.add(collection.cardId);
+            void putRecord("collections", collection);
+            const card = merged.get(collection.cardId);
+            if (card) merged.set(card.id, { ...card, state: "collected", requirement: "Dans votre collection" });
+          });
+          const next = [...merged.values()];
+          cardsRef.current = next;
+          return next;
+        });
+        setSyncState("synced");
+      } catch {
+        setSyncState("offline");
+      }
+    };
+    void hydrateCloud();
 
     const beforeInstall = (event: Event) => {
       event.preventDefault();
       setInstallPrompt(event);
     };
     window.addEventListener("beforeinstallprompt", beforeInstall);
-    return () => window.removeEventListener("beforeinstallprompt", beforeInstall);
+    window.addEventListener("online", hydrateCloud);
+    const onOffline = () => setSyncState("offline");
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", beforeInstall);
+      window.removeEventListener("online", hydrateCloud);
+      window.removeEventListener("offline", onOffline);
+    };
   }, []);
+
+  useEffect(() => {
+    cardsRef.current = cards;
+  }, [cards]);
 
   const revealPoint = useCallback((point: Point) => {
     setPosition(point);
@@ -316,20 +167,25 @@ export function ExplorerApp() {
         radius: 50,
         createdAt: point.ts,
       };
-      void dbPut("circles", next);
+      void putRecord("circles", next);
       void syncCircle(next);
       setToast("Nouvelle zone dévoilée · +50 m");
       return [...current, next];
+    });
+    cardsRef.current.forEach((card) => {
+      if (card.state === "collected" || card.state === "proposal" || card.latitude == null || card.longitude == null) return;
+      if (distanceBetween(point, { lat: card.latitude, lng: card.longitude }) <= (card.unlockRadius ?? 50)) {
+        unlockCard(card.id, "gps", `Carte « ${card.title} » découverte !`);
+      }
     });
     if (tracking && point.ts - lastGpsRef.current >= GPS_INTERVAL) {
       lastGpsRef.current = point.ts;
       setRoute((current) => [...current, point]);
     }
-  }, [tracking]);
+  }, [tracking, unlockCard]);
 
   useEffect(() => {
     if (!tracking || demoMode || !navigator.geolocation) return;
-    setGpsState("asking");
     const watchId = navigator.geolocation.watchPosition(
       ({ coords, timestamp }) => {
         setGpsState("live");
@@ -457,15 +313,16 @@ export function ExplorerApp() {
       });
       line.addTo(layers.route);
     }
-    const current = position ?? demoPath[demoPath.length - 1];
-    L.marker([current.lat, current.lng], {
-      icon: L.divIcon({
-        className: "explorer-marker-wrap",
-        html: `<span class="explorer-marker"><b></b><i style="transform:rotate(${heading}deg)"></i></span>`,
-        iconSize: [48, 48],
-        iconAnchor: [24, 24],
-      }),
-    }).addTo(layers.marker);
+    if (position) {
+      L.marker([position.lat, position.lng], {
+        icon: L.divIcon({
+          className: "explorer-marker-wrap",
+          html: `<span class="explorer-marker"><b></b><i style="transform:rotate(${heading}deg)"></i></span>`,
+          iconSize: [48, 48],
+          iconAnchor: [24, 24],
+        }),
+      }).addTo(layers.marker);
+    }
   }, [circles, route, position, heading, tab, mapReady]);
 
   const start = (demo = false) => {
@@ -491,8 +348,14 @@ export function ExplorerApp() {
         points: route,
       };
       setTrips((current) => [trip, ...current]);
-      void dbPut("trips", trip);
+      void putRecord("trips", trip);
       void syncTrip(trip);
+      const lifetimeDistance = trips.reduce((sum, savedTrip) => sum + savedTrip.distance, 0) + trip.distance;
+      cardsRef.current.forEach((card) => {
+        if (card.state !== "collected" && card.state !== "proposal" && card.challengeDistance && lifetimeDistance >= card.challengeDistance) {
+          unlockCard(card.id, "challenge", `Défi réussi · carte « ${card.title} » ajoutée !`);
+        }
+      });
       setToast("Trajet enregistré dans votre historique");
     }
     setTracking(false);
@@ -561,10 +424,13 @@ export function ExplorerApp() {
       requirement: "Votre proposition · en cours de vote",
       tone: "green",
       image,
+      latitude: position?.lat ?? PARIS.lat,
+      longitude: position?.lng ?? PARIS.lng,
+      unlockRadius: 50,
     };
     setCards((current) => [...current, proposal]);
-    void dbPut("proposals", proposal);
-    void syncProposal(proposal);
+    void putRecord("proposals", proposal);
+    void syncProposal(proposal, file instanceof File && file.size ? file : undefined);
     setProposalOpen(false);
     setToast("Votre carte est ouverte aux votes");
   };
@@ -587,20 +453,46 @@ export function ExplorerApp() {
     setToast("Archive d’exploration exportée");
   };
 
-  const unlockQr = (event: FormEvent<HTMLFormElement>) => {
+  const unlockQr = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const code = String(new FormData(event.currentTarget).get("code") || "").trim().toUpperCase();
     if (!code) return;
-    setCards((current) => current.map((card) => card.id === "card-ourcq" ? { ...card, state: "collected", requirement: `Débloquée avec ${code}` } : card));
-    setQrOpen(false);
-    setToast("Carte « L’eau sous la ville » débloquée !");
+    try {
+      const cardId = await redeemQrCode(code);
+      const card = cardsRef.current.find((item) => item.id === cardId);
+      unlockCard(cardId, "qr", `Carte « ${card?.title ?? "Mystère"} » débloquée !`);
+      setQrOpen(false);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Ce QR code n’est pas reconnu");
+    }
   };
 
   const routeMeters = routeDistance(route);
   const speedKmh = ((position?.speed ?? 0) * 3.6);
   const totalDistance = trips.reduce((sum, trip) => sum + trip.distance, 0);
+  const totalDuration = trips.reduce((sum, trip) => sum + trip.duration, 0);
   const totalCircles = circles.length + trips.reduce((sum, trip) => sum + trip.circles, 0);
   const collected = cards.filter((card) => card.state === "collected").length;
+  const collectionTotal = cards.filter((card) => card.state !== "proposal").length;
+  const collectionProgress = collectionTotal ? Math.round((collected / collectionTotal) * 100) : 0;
+  const exploredCities = new Set(cards.filter((card) => card.state === "collected").map((card) => card.city)).size;
+  const xp = circles.length * 10 + trips.length * 100 + collected * 250;
+  const level = Math.floor(xp / 1_000) + 1;
+  const levelProgress = Math.round((xp % 1_000) / 10);
+  const weeklyDistances = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Array.from({ length: 7 }, (_, index) => {
+      const start = today.getTime() - (6 - index) * 86_400_000;
+      const end = start + 86_400_000;
+      return {
+        label: new Date(start).toLocaleDateString("fr-FR", { weekday: "narrow" }).toUpperCase(),
+        distance: trips.filter((trip) => trip.startedAt >= start && trip.startedAt < end).reduce((sum, trip) => sum + trip.distance, 0),
+      };
+    });
+  }, [trips]);
+  const weeklyTotal = weeklyDistances.reduce((sum, day) => sum + day.distance, 0);
+  const weeklyMax = Math.max(1, ...weeklyDistances.map((day) => day.distance));
 
   const tabTitle = useMemo(() => ({ map: "Explorer", trips: "Mes trajets", cities: "Cartes de villes", profile: "Profil" })[tab], [tab]);
 
@@ -619,7 +511,7 @@ export function ExplorerApp() {
             </button>
           ))}
         </nav>
-        <div className="rail-level"><span>Niveau 8</span><b>72%</b><i><em /></i></div>
+        <div className="rail-level"><span>Niveau {level}</span><b>{levelProgress}%</b><i><em style={{ width: `${levelProgress}%` }} /></i></div>
         <button className="rail-avatar" onClick={() => setTab("profile")}><span>PH</span><i className="online-dot" /></button>
       </aside>
 
@@ -630,7 +522,7 @@ export function ExplorerApp() {
           <a className="osm-credit" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap</a>
           <header className="map-topbar">
             <button className="map-help" onClick={() => setToast("Marchez pour agrandir la zone verte et dévoiler la carte")}>?</button>
-            <div className="map-city-tag"><span className="live-pulse" /><b>Paris</b><small>{gpsState === "live" ? "GPS EN DIRECT" : "MODE EXPLORATION"}</small></div>
+            <div className="map-city-tag"><span className="live-pulse" /><b>Paris</b><small>{gpsState === "live" ? "GPS EN DIRECT" : "MODE EXPLORATION"}</small><em className={`sync-state ${syncState}`}>{syncState === "synced" ? "SAUVEGARDÉ" : syncState === "syncing" ? "SYNCHRO…" : "HORS LIGNE"}</em></div>
             <button className="round-control avatar-control" onClick={() => setTab("profile")} aria-label="Ouvrir le profil">PH<span /></button>
           </header>
 
@@ -661,19 +553,19 @@ export function ExplorerApp() {
 
           <div className="discovery-card">
             <span className="discovery-icon">🗺️</span>
-            <div><small>QUÊTE DU JOUR</small><strong>Explore encore {Math.max(1, 10 - Math.max(circles.length - 7, 7))} zones !</strong></div>
+            <div><small>QUÊTE DU JOUR</small><strong>Explore encore {Math.max(0, 10 - circles.length)} zones !</strong></div>
             <span className="gain">+{Math.max(80, circles.length * 10)} XP</span>
           </div>
 
           <div className="exploration-console">
             <div className="metric"><small>VITESSE</small><strong>{speedKmh.toFixed(1)}</strong><span>km/h</span></div>
-            <div className="metric"><small>DISTANCE</small><strong>{routeMeters ? (routeMeters / 1000).toFixed(2) : "0.84"}</strong><span>km</span></div>
+            <div className="metric"><small>DISTANCE</small><strong>{(routeMeters / 1000).toFixed(2)}</strong><span>km</span></div>
             <button className={`explore-button ${tracking ? "recording" : ""}`} onClick={() => tracking ? stop() : start(false)}>
               <span>{tracking ? "■" : "↗"}</span>
               <div><small>{tracking ? formatTime(elapsed) : "PRÊT À PARTIR"}</small><strong>{tracking ? "Terminer" : "Explorer"}</strong></div>
             </button>
-            <div className="metric"><small>DURÉE</small><strong>{tracking ? formatTime(elapsed).replace(" min", "") : "12"}</strong><span>min</span></div>
-            <div className="metric"><small>DÉVOILÉ</small><strong>{tracking ? route.length : "07"}</strong><span>zones</span></div>
+            <div className="metric"><small>DURÉE</small><strong>{tracking ? formatTime(elapsed).replace(" min", "") : "0"}</strong><span>min</span></div>
+            <div className="metric"><small>DÉVOILÉ</small><strong>{tracking ? route.length : 0}</strong><span>zones</span></div>
           </div>
           {selectedTrip && <button className="history-pill" onClick={() => { setSelectedTrip(null); setRoute([]); }}>× Fermer le trajet affiché</button>}
           <div className={`toast ${toast ? "show" : ""}`} role="status"><span>✓</span>{toast}</div>
@@ -687,15 +579,15 @@ export function ExplorerApp() {
             <article className="hero-stat lime-panel">
               <span className="stat-symbol">↗</span>
               <p>Distance totale</p><strong>{(totalDistance / 1000).toFixed(1)}<small> km</small></strong>
-              <span className="trend">↗ 12% ce mois</span>
+              <span className="trend">{trips.length ? `${trips.length} exploration${trips.length > 1 ? "s" : ""}` : "Prêt pour la première sortie"}</span>
             </article>
             <article className="week-card">
-              <div className="card-heading"><div><span>7 DERNIERS JOURS</span><strong>Votre rythme</strong></div><b>18,4 km</b></div>
+              <div className="card-heading"><div><span>7 DERNIERS JOURS</span><strong>Votre rythme</strong></div><b>{formatDistance(weeklyTotal)}</b></div>
               <div className="bar-chart" aria-label="Distance parcourue ces sept derniers jours">
-                {[35, 62, 48, 82, 54, 100, 72].map((height, index) => <i key={index} style={{ height: `${height}%` }}><span>{["L", "M", "M", "J", "V", "S", "D"][index]}</span></i>)}
+                {weeklyDistances.map((day, index) => <i key={index} style={{ height: `${Math.max(3, (day.distance / weeklyMax) * 100)}%` }}><span>{day.label}</span></i>)}
               </div>
             </article>
-            <article className="mini-stat"><span>◷</span><div><small>TEMPS EN MOUVEMENT</small><strong>5 h 42</strong></div></article>
+            <article className="mini-stat"><span>◷</span><div><small>TEMPS EN MOUVEMENT</small><strong>{formatTime(totalDuration)}</strong></div></article>
             <article className="mini-stat"><span>◎</span><div><small>ZONES DÉVOILÉES</small><strong>{totalCircles}</strong></div></article>
           </div>
           <div className="section-heading"><div><small>HISTORIQUE</small><h2>Explorations récentes</h2></div><button>Tout afficher</button></div>
@@ -719,8 +611,8 @@ export function ExplorerApp() {
             <div className="city-art"><span>PARIS</span><i className="eiffel">A</i><em>48° 51′ N<br />2° 21′ E</em></div>
             <div className="city-progress">
               <span>VILLE ACTIVE</span><h2>Paris</h2><p>Chaque quartier cache une histoire. Explorez la ville pour compléter votre collection.</p>
-              <div className="collection-count"><strong>12</strong><span>/ 18 cartes</span><b>67%</b></div>
-              <i className="progress-track"><em style={{ width: "67%" }} /></i>
+              <div className="collection-count"><strong>{collected}</strong><span>/ {collectionTotal} cartes</span><b>{collectionProgress}%</b></div>
+              <i className="progress-track"><em style={{ width: `${collectionProgress}%` }} /></i>
               <button onClick={() => setTab("map")}>Continuer l’exploration <span>↗</span></button>
             </div>
           </div>
@@ -742,15 +634,15 @@ export function ExplorerApp() {
         <section className="content-screen profile-screen">
           <ContentHeader eyebrow="EXPLORATEUR DEPUIS 2026" title={tabTitle} action="Réglages" onAction={() => setToast("Les réglages seront synchronisés sur cet appareil")} />
           <div className="profile-hero">
-            <div className="profile-avatar"><span>PH</span><i>NIV. 8</i></div>
-            <div className="profile-copy"><span>EXPLORATEUR URBAIN</span><h2>Paul H.</h2><p>Paris · France</p><div className="level-line"><i><em /></i><span>3 680 / 5 000 XP</span></div></div>
+            <div className="profile-avatar"><span>PH</span><i>NIV. {level}</i></div>
+            <div className="profile-copy"><span>EXPLORATEUR URBAIN</span><h2>Paul H.</h2><p>Paris · France</p><div className="level-line"><i><em style={{ width: `${levelProgress}%` }} /></i><span>{xp % 1_000} / 1 000 XP</span></div></div>
             <button className="outline-button" onClick={() => installPrompt && (installPrompt as Event & { prompt: () => Promise<void> }).prompt()}>{installPrompt ? "Installer l’app" : "PWA installée"}</button>
           </div>
           <div className="profile-stats">
             <article><span>↗</span><strong>{(totalDistance / 1000).toFixed(1)} km</strong><small>PARCOURUS</small></article>
             <article><span>◎</span><strong>{totalCircles}</strong><small>ZONES</small></article>
-            <article><span>▦</span><strong>{collected + 11}</strong><small>CARTES</small></article>
-            <article><span>⌖</span><strong>3</strong><small>VILLES</small></article>
+            <article><span>▦</span><strong>{collected}</strong><small>CARTES</small></article>
+            <article><span>⌖</span><strong>{exploredCities}</strong><small>VILLES</small></article>
           </div>
           <div className="profile-columns">
             <div>
@@ -778,8 +670,9 @@ export function ExplorerApp() {
       </nav>
 
       {proposalOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setProposalOpen(false)}>
-          <form className="proposal-modal" onSubmit={submitProposal} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-backdrop">
+          <button type="button" className="modal-dismiss" onClick={() => setProposalOpen(false)} aria-label="Fermer la proposition" />
+          <form className="proposal-modal" onSubmit={submitProposal}>
             <button type="button" className="modal-close" onClick={() => setProposalOpen(false)} aria-label="Fermer">×</button>
             <span className="modal-eyebrow">COMMUNAUTÉ</span><h2>Proposer une carte</h2><p>Partagez un lieu, une histoire ou un détail que les explorateurs pourront débloquer sur place.</p>
             <label>Titre<input name="title" required placeholder="Ex. Les enseignes oubliées" /></label>
@@ -791,12 +684,13 @@ export function ExplorerApp() {
         </div>
       )}
       {qrOpen && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setQrOpen(false)}>
-          <form className="proposal-modal qr-modal" onSubmit={unlockQr} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-backdrop">
+          <button type="button" className="modal-dismiss" onClick={() => setQrOpen(false)} aria-label="Fermer le scanner QR" />
+          <form className="proposal-modal qr-modal" onSubmit={unlockQr}>
             <button type="button" className="modal-close" onClick={() => setQrOpen(false)} aria-label="Fermer">×</button>
             <span className="modal-eyebrow">DÉBLOCAGE SUR PLACE</span><h2>Scanner un QR</h2><div className="qr-frame"><i /><span>▦</span><small>Placez le code dans le cadre</small></div>
             <p>Sur cet aperçu, saisissez le code imprimé sous le QR. Essayez <b>PARIS-2026</b>.</p>
-            <label>Code de la carte<input name="code" required placeholder="PARIS-2026" autoFocus /></label>
+            <label>Code de la carte<input name="code" required placeholder="PARIS-2026" /></label>
             <button className="submit-proposal" type="submit">Débloquer la carte <span>→</span></button>
           </form>
         </div>
