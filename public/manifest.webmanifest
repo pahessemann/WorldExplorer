@@ -1,0 +1,20 @@
+{
+  "name": "WorldExplorer",
+  "short_name": "Explorer",
+  "description": "Dévoilez le monde à chacun de vos pas.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111412",
+  "theme_color": "#111412",
+  "orientation": "portrait-primary",
+  "lang": "fr",
+  "categories": ["travel", "fitness", "navigation"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
