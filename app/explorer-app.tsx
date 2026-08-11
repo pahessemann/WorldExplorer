@@ -256,6 +256,7 @@ export function ExplorerApp() {
         maxZoom: 19,
         minZoom: 3,
         crossOrigin: true,
+        className: "cartoon-map-tiles",
       });
       tiles.on("tileload", () => {
         tileLoaded = true;
@@ -306,7 +307,7 @@ export function ExplorerApp() {
     const world = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];
     L.polygon([world, ...circles.map(circleRing)], {
       stroke: false,
-      fillColor: "#263d4b",
+      fillColor: "#476275",
       fillOpacity: 0.28,
       fillRule: "evenodd",
       interactive: false,
@@ -314,11 +315,11 @@ export function ExplorerApp() {
     circles.forEach((circle) => {
       L.circle([circle.lat, circle.lng], {
         radius: 50,
-        color: "#91dc8b",
-        weight: 2,
-        opacity: 0.62,
-        fillColor: "#a9e9a0",
-        fillOpacity: 0.2,
+        color: "#327052",
+        weight: 3,
+        opacity: 0.78,
+        fillColor: "#b9f29a",
+        fillOpacity: 0.24,
         interactive: false,
       }).addTo(layers.reveals);
     });
@@ -335,10 +336,16 @@ export function ExplorerApp() {
       }).addTo(layers.mysteries);
     });
     if (route.length > 1) {
+      L.polyline(route.map((p) => [p.lat, p.lng]), {
+        color: "#253b55",
+        weight: 9,
+        opacity: 0.72,
+        lineCap: "round",
+      }).addTo(layers.route);
       const line = L.polyline(route.map((p) => [p.lat, p.lng]), {
-        color: "#dfe8ef",
+        color: "#fff8d7",
         weight: 5,
-        opacity: 0.95,
+        opacity: 1,
         lineCap: "round",
       });
       line.addTo(layers.route);

@@ -21,7 +21,7 @@ test("keeps exploration offline-first", async () => {
   ]);
   assert.match(storage, /const DB_VERSION = 2/);
   for (const store of ["circles", "trips", "collections", "outbox"]) assert.match(storage, new RegExp(`"${store}"`));
-  assert.match(serviceWorker, /worldexplorer-static-v7/);
+  assert.match(serviceWorker, /worldexplorer-static-v8/);
   assert.match(serviceWorker, /client\.navigate\(client\.url\)/);
   assert.match(serviceWorker, /worldexplorer-osm-v1/);
   assert.match(serviceWorker, /pathname\.startsWith\("\/api\/"\)/);
@@ -31,7 +31,9 @@ test("keeps exploration offline-first", async () => {
 test("keeps the map visible and removes decorative controls", async () => {
   const explorer = await source("app/explorer-app.tsx");
   assert.match(explorer, /https:\/\/tile\.openstreetmap\.org\/\{z\}\/\{x\}\/\{y\}\.png/);
+  assert.match(explorer, /className: "cartoon-map-tiles"/);
   assert.match(explorer, /fillOpacity: 0\.28/);
+  assert.match(await source("app/globals.css"), /saturate\(1\.38\).*sepia\(\.06\)/s);
   assert.doesNotMatch(explorer, /Radar des découvertes|RÉCLAMER|map-layer-control/);
   assert.match(explorer, /Aucune énergie, aucun booster et aucune zone payante/);
   assert.match(explorer, /mystery-marker/);
